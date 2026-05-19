@@ -31,7 +31,7 @@ fn test_commit_identity() -> CommitIdentity {
     }
 }
 
-fn make_case_dir(case_name: &str) -> PathBuf {
+pub fn make_case_dir(case_name: &str) -> PathBuf {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()

@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::Path;
 
+pub mod get_args;
 pub mod git_paths;
 pub mod object;
 pub mod symbolic_ref;
@@ -11,6 +12,11 @@ pub mod commit;
 pub mod commit_identity;
 pub mod staging;
 pub mod checkout;
+
+use get_args::get_args_and_go;
+pub fn run() -> anyhow::Result<()> {
+    get_args_and_go()
+}
 
 #[cfg(test)]
 mod tests;
@@ -40,6 +46,9 @@ pub fn init<P: AsRef<Path>>(root: P) -> Result<(), std::io::Error> {
     for file in files {
         fs::File::create(file)?;
     }
+
+    let head_path = root.join("HEAD");
+    fs::write(&head_path, b"ref: refs/heads/master\n")?;
 
     Ok(())
 }

@@ -1,8 +1,9 @@
 //! 一些与git仓库路径相关的辅助函数
 //! 约定: worktree是工作文件夹的绝对路径, git_dir是类似.git或.gift的仓库名称
 
-use anyhow::{Context, Result, bail};
-use std::path::{Path, PathBuf};
+use anyhow::{Context, Ok, Result, bail};
+use std::{fs, path::{Path, PathBuf}};
+
 
 /// `worktree.join(git_dir)`，即 git 目录的绝对路径
 pub fn resolve_git_dir(worktree: &Path, git_dir: impl AsRef<Path>) -> PathBuf {
@@ -65,3 +66,33 @@ pub fn loose_object_path(git_dir: impl AsRef<Path>, hex_oid: &str) -> PathBuf {
         .join(&hex_oid[0..2])
         .join(&hex_oid[2..])
 }
+
+#[derive(Debug, Clone)]
+pub struct RepoPaths {
+    pub work_tree: PathBuf,
+    pub git_dir: PathBuf,
+}
+
+///向上找到当前目录的.gift文件夹和worktree的相对路径
+pub fn discover_repo_from_cwd() -> Result<RepoPaths>{
+    //返回当前工作目录的绝对路径
+    let cwd = std::env::current_dir()?;
+    let mut cur = fs::canonicalize(&cwd)?;
+    loop{
+        let gift_path = cur.join(".gift");
+        if gift_path.is_dir(){
+            return Ok(RepoPaths{
+                work_tree:cur.clone(),
+                git_dir: gift_path,
+            });
+        }
+        match cur.parent() {
+            Some(parent) => cur = parent.to_path_buf(),
+            None => break,
+        }
+    }
+    bail!("not a gift repository (or any parent): {}", cwd.display());
+}
+
+
+

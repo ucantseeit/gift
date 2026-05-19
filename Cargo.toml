@@ -11,3 +11,4 @@ hex = "0.4.3"
 hex-literal = "1.1.0"
 log = "0.4.29"
 sha1 = "0.11.0"
+clap = { version = "4.6.1", features = ["derive"] }

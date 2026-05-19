@@ -33,6 +33,10 @@ pub fn stage_paths(
     let git_dir = git_dir.as_ref();
     let work_tree = work_tree.as_ref();
 
+    //fs::canonicalize的功能：
+    //1.解析符号链接（比如说symlink快捷方式）
+    //2.展开相对路径转换成绝对路径
+    //3.验证路径存在
     let work_tree_canon = fs::canonicalize(work_tree)?;
     let git_dir_canon = fs::canonicalize(git_dir)?;
     // 用户可能不在work_tree目录下运行git add操作，所以需要cwd

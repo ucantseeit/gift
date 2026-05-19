@@ -8,7 +8,7 @@ use anyhow::{Context, Result, bail};
 use crate::object::CommitIdentity;
 
 /// 解析 `GIT_AUTHOR_DATE` / `GIT_COMMITTER_DATE`：`<unix 秒> <时区>`，例如 `1700000000 +0800`。
-pub fn parse_git_identity_date(s: &str) -> Result<(i64, String)> {
+fn parse_git_identity_date(s: &str) -> Result<(i64, String)> {
     let s = s.trim();
     let mut it = s.split_whitespace();
     let unix: i64 = it
