@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
-use std::fs;
 use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
+use std::fs;
 use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -11,10 +11,8 @@ use crate::index::index_tree::{IndexRootTree, TreeNode};
 use flate2::bufread::ZlibDecoder;
 
 use crate::commit;
-use crate::object::{
-    commit_tree, CommitIdentity, CommitObject, FileMode, ObjectSha, TreeObject,
-};
 use crate::git_paths::branch_ref_path;
+use crate::object::{commit_tree, CommitIdentity, CommitObject, FileMode, ObjectSha, TreeObject};
 use crate::reference::{read_ref, update_ref};
 use crate::symbolic_ref::{read_symbolic_ref, write_symbolic_ref, SymbolicRef};
 
@@ -69,9 +67,9 @@ fn decompress_loose_object(git_dir: &Path, hex_oid: &str) -> Vec<u8> {
 
 /// 在指定工作目录下调用系统的 git commit-tree，并固定 author/committer 环境变量，
 /// 返回新产生的 commit 的 SHA（40 位 hex 字符串）。
-/// 参数: 
+/// 参数:
 ///      dir：仓库根目录,   
-///      tree：根 tree 的 OID 字符串（通常来自 git write-tree), 
+///      tree：根 tree 的 OID 字符串（通常来自 git write-tree),
 ///      parents：父 commit 列表
 ///      msg：-m 后面的提交说明
 fn git_commit_tree_with_env(dir: &Path, tree: &str, parents: &[&str], msg: &str) -> String {
@@ -121,7 +119,9 @@ fn git_stdout(dir: &Path, args: &[&str]) -> String {
 
 /// `git ls-tree` 一行：`100644 blob <sha>\tname`
 fn parse_ls_tree_line(line: &str) -> (String, String, String, String) {
-    let (left, name) = line.split_once('\t').expect("ls-tree line must contain tab");
+    let (left, name) = line
+        .split_once('\t')
+        .expect("ls-tree line must contain tab");
     let mut it = left.split_whitespace();
     let mode = it.next().expect("mode").to_string();
     let obj_type = it.next().expect("type").to_string();
@@ -157,7 +157,11 @@ fn git_ls_tree_map(dir: &Path, tree_oid: &str) -> BTreeMap<String, (String, Stri
 }
 
 /// DFS 收集所有 blob 叶子：相对路径 → (mode, oid)。
-fn collect_blob_leaves_from_tree(rel: PathBuf, node: &TreeNode, out: &mut BTreeMap<PathBuf, (FileMode, ObjectSha)>) {
+fn collect_blob_leaves_from_tree(
+    rel: PathBuf,
+    node: &TreeNode,
+    out: &mut BTreeMap<PathBuf, (FileMode, ObjectSha)>,
+) {
     match node {
         TreeNode::Blob(leaf) => {
             out.insert(rel, (leaf.file_mode(), leaf.object_name().clone()));
@@ -258,10 +262,7 @@ fn stage_paths_roundtrip_index() {
     fs::write(work_tree.join("sub").join("nested.txt"), b"x\n").unwrap();
 
     // 执行stage操作
-    let inputs = vec![
-        work_tree.join("top.txt"),
-        work_tree.join("sub"),
-    ];
+    let inputs = vec![work_tree.join("top.txt"), work_tree.join("sub")];
     super::staging::stage_paths(&git_dir, &work_tree, &inputs, true).unwrap();
 
     // 拿到并检验index_file
@@ -309,11 +310,7 @@ fn cmp_read_tree_matches_git_ls_tree() {
 
     fs::write(case_dir.join("a.txt"), "hello\n").unwrap();
     fs::create_dir_all(case_dir.join("foo").join("啊")).unwrap();
-    fs::write(
-        case_dir.join("foo").join("啊").join("bar"),
-        "你好！aa\n",
-    )
-    .unwrap();
+    fs::write(case_dir.join("foo").join("啊").join("bar"), "你好！aa\n").unwrap();
     fs::write(case_dir.join("script.sh"), "#!/bin/sh\necho ok\n").unwrap();
     symlink("a.txt", case_dir.join("link")).expect("symlink link -> a.txt");
 
@@ -385,9 +382,7 @@ fn cmp_read_tree_matches_git_ls_tree() {
     assert_eq!(tree_foo.entries().len(), expected_foo.len());
     assert_eq!(tree_foo.entries().len(), 1, "foo/ only contains 啊");
 
-    let (_, _, ah_tree_sha) = expected_foo
-        .get("啊")
-        .expect("啊 tree under foo");
+    let (_, _, ah_tree_sha) = expected_foo.get("啊").expect("啊 tree under foo");
     let expected_ah = git_ls_tree_map(&case_dir, ah_tree_sha);
     let tree_ah = TreeObject::read_loose_tree(&git_dir, ah_tree_sha);
     assert_eq!(tree_ah.entries().len(), 1);
@@ -405,11 +400,7 @@ fn from_index_file_matches_parsed_index_entries() {
     let case_dir = make_case_dir("from_index_only");
     fs::write(case_dir.join("a.txt"), "hello\n").unwrap();
     fs::create_dir_all(case_dir.join("foo").join("啊")).unwrap();
-    fs::write(
-        case_dir.join("foo").join("啊").join("bar"),
-        "你好！aa\n",
-    )
-    .unwrap();
+    fs::write(case_dir.join("foo").join("啊").join("bar"), "你好！aa\n").unwrap();
 
     run_git(&case_dir, &["init"]);
     run_git(&case_dir, &["add", "."]);
@@ -424,13 +415,21 @@ fn from_index_file_matches_parsed_index_entries() {
     let root = IndexRootTree::from_index_file(&idx).expect("from_index_file");
     let got = collect_blob_leaves_from_root(&root);
 
-    assert_eq!(got.len(), idx.entries().len(), "leaf count == index entries");
+    assert_eq!(
+        got.len(),
+        idx.entries().len(),
+        "leaf count == index entries"
+    );
     assert_eq!(got.len(), expected.len());
     for (path, exp) in &expected {
         assert_eq!(got.get(path), Some(exp), "{}", path.display());
     }
     for path in got.keys() {
-        assert!(expected.contains_key(path), "unexpected leaf {}", path.display());
+        assert!(
+            expected.contains_key(path),
+            "unexpected leaf {}",
+            path.display()
+        );
     }
 }
 
@@ -445,11 +444,7 @@ fn from_index_file_write_tree_matches_git_write_tree() {
 
     fs::write(case_dir.join("a.txt"), "hello\n").unwrap();
     fs::create_dir_all(case_dir.join("foo").join("啊")).unwrap();
-    fs::write(
-        case_dir.join("foo").join("啊").join("bar"),
-        "你好！aa\n",
-    )
-    .unwrap();
+    fs::write(case_dir.join("foo").join("啊").join("bar"), "你好！aa\n").unwrap();
     fs::write(case_dir.join("script.sh"), "#!/bin/sh\necho ok\n").unwrap();
     symlink("a.txt", case_dir.join("link")).expect("symlink");
 
@@ -585,7 +580,10 @@ fn read_commit_merge_two_parents() {
     assert_eq!(parsed.parents.len(), 2);
     assert_eq!(hex::encode(parsed.parents[0].as_bytes()), p1);
     assert_eq!(hex::encode(parsed.parents[1].as_bytes()), p2);
-    assert_eq!(parsed.to_binary(), decompress_loose_object(&git_dir, &merge));
+    assert_eq!(
+        parsed.to_binary(),
+        decompress_loose_object(&git_dir, &merge)
+    );
 }
 
 /// `commit_tree`：写入 objects 后 OID 与 `to_binary` 的 SHA1 一致。
@@ -633,18 +631,27 @@ fn commit_tree_writes_loose_object() {
     let round = CommitObject::read_loose_commit(&git_dir, &hex_out);
     assert_eq!(round.tree, tree_sha);
     assert_eq!(round.message, commit.message);
-    assert_eq!(decompress_loose_object(&git_dir, &hex_out), commit.to_binary());
+    assert_eq!(
+        decompress_loose_object(&git_dir, &hex_out),
+        commit.to_binary()
+    );
 }
 
 #[test]
 fn branch_ref_path_joins_heads() {
     assert_eq!(
         branch_ref_path(test_git_dir(), "main"),
-        PathBuf::from(".git").join("refs").join("heads").join("main")
+        PathBuf::from(".git")
+            .join("refs")
+            .join("heads")
+            .join("main")
     );
     assert_eq!(
         branch_ref_path(Path::new(".gift"), "main"),
-        PathBuf::from(".gift").join("refs").join("heads").join("main")
+        PathBuf::from(".gift")
+            .join("refs")
+            .join("heads")
+            .join("main")
     );
 }
 
@@ -665,10 +672,7 @@ fn read_ref_and_update_ref_match_git() {
     let c0 = git_commit_tree_with_env(&case_dir, &tree_hex, &[], "c0");
     let ref_path = branch_ref_path(test_git_dir(), "mine");
 
-    run_git(
-        &case_dir,
-        &["update-ref", &format!("refs/heads/mine"), &c0],
-    );
+    run_git(&case_dir, &["update-ref", &format!("refs/heads/mine"), &c0]);
 
     let r = read_ref(&case_dir, test_git_dir(), &ref_path).expect("read_ref");
     assert_eq!(hex::encode(r.commit_id.as_bytes()), c0);
@@ -689,7 +693,8 @@ fn read_ref_and_update_ref_match_git() {
         .trim()
         .to_string();
     assert_eq!(rev, c1);
-    let r2 = read_ref(&case_dir, test_git_dir(), &ref_path).expect("read_ref after gift update_ref");
+    let r2 =
+        read_ref(&case_dir, test_git_dir(), &ref_path).expect("read_ref after gift update_ref");
     assert_eq!(hex::encode(r2.commit_id.as_bytes()), c1);
 }
 
@@ -753,14 +758,8 @@ fn read_symbolic_ref_matches_git() {
         .trim()
         .to_string();
     let c0 = git_commit_tree_with_env(&case_dir, &tree_hex, &[], "root");
-    run_git(
-        &case_dir,
-        &["update-ref", "refs/heads/main", &c0],
-    );
-    run_git(
-        &case_dir,
-        &["symbolic-ref", "HEAD", "refs/heads/main"],
-    );
+    run_git(&case_dir, &["update-ref", "refs/heads/main", &c0]);
+    run_git(&case_dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
 
     let head_path = test_git_dir().join("HEAD");
     let s = read_symbolic_ref(&case_dir, &head_path).expect("read_symbolic_ref");
@@ -781,20 +780,12 @@ fn write_symbolic_ref_matches_git() {
         .trim()
         .to_string();
     let c0 = git_commit_tree_with_env(&case_dir, &tree_hex, &[], "tip");
-    run_git(
-        &case_dir,
-        &["update-ref", "refs/heads/foo", &c0],
-    );
+    run_git(&case_dir, &["update-ref", "refs/heads/foo", &c0]);
 
     let sym = SymbolicRef {
         ref_name: "refs/heads/foo".into(),
     };
-    write_symbolic_ref(
-        &case_dir,
-        test_git_dir().join("HEAD"),
-        &sym,
-    )
-    .expect("write_symbolic_ref");
+    write_symbolic_ref(&case_dir, test_git_dir().join("HEAD"), &sym).expect("write_symbolic_ref");
 
     let got = git_stdout(&case_dir, &["symbolic-ref", "-q", "HEAD"])
         .trim()
@@ -907,3 +898,184 @@ fn commit_on_detached_head_updates_oid_and_parent() {
     assert_eq!(parsed.message, b"while detached\n");
 }
 
+#[test]
+fn checkout_commit_detaches_and_restores_worktree_without_symlinks() {
+    let case_dir = make_case_dir("checkout_detached_basic");
+    let id = test_commit_identity();
+
+    run_git(&case_dir, &["init"]);
+    let git_bare = fs::canonicalize(case_dir.join(".git")).unwrap();
+
+    fs::write(case_dir.join("a.txt"), "v1\n").unwrap();
+    fs::write(case_dir.join("old.txt"), "old\n").unwrap();
+    run_git(&case_dir, &["add", "-A"]);
+    let c1 = commit::commit(&case_dir, &git_bare, id.clone(), id.clone(), "first".into())
+        .expect("commit c1");
+
+    fs::write(case_dir.join("a.txt"), "v2\n").unwrap();
+    fs::remove_file(case_dir.join("old.txt")).unwrap();
+    fs::write(case_dir.join("new.txt"), "new\n").unwrap();
+    run_git(&case_dir, &["add", "-A"]);
+    let _c2 = commit::commit(
+        &case_dir,
+        &git_bare,
+        id.clone(),
+        id.clone(),
+        "second".into(),
+    )
+    .expect("commit c2");
+
+    crate::checkout::checkout_commit(&case_dir, test_git_dir(), c1.clone())
+        .expect("checkout c1 detached");
+
+    assert_eq!(fs::read_to_string(case_dir.join("a.txt")).unwrap(), "v1\n");
+    assert_eq!(
+        fs::read_to_string(case_dir.join("old.txt")).unwrap(),
+        "old\n"
+    );
+    assert!(!case_dir.join("new.txt").exists(), "new.txt removed");
+
+    let c1_hex = hex::encode(c1.as_bytes());
+    let raw_head = fs::read_to_string(case_dir.join(".git/HEAD")).unwrap();
+    assert_eq!(raw_head.trim(), c1_hex, "HEAD is detached to c1");
+
+    let checked_out_tree = git_stdout(&case_dir, &["write-tree"])
+        .lines()
+        .next()
+        .unwrap()
+        .trim()
+        .to_string();
+    let c1_obj = CommitObject::read_loose_commit(&git_bare, &c1_hex);
+    assert_eq!(
+        checked_out_tree,
+        hex::encode(c1_obj.tree.as_bytes()),
+        "index tree after checkout equals c1 tree"
+    );
+}
+
+#[test]
+fn checkout_branch_restores_tip_and_keeps_symbolic_head() {
+    let case_dir = make_case_dir("checkout_branch_basic");
+    let id = test_commit_identity();
+
+    run_git(&case_dir, &["init"]);
+    let git_bare = fs::canonicalize(case_dir.join(".git")).unwrap();
+
+    fs::write(case_dir.join("branch.txt"), "side\n").unwrap();
+    fs::write(case_dir.join("common.txt"), "side version\n").unwrap();
+    run_git(&case_dir, &["add", "-A"]);
+    let side_tip = commit::commit(
+        &case_dir,
+        &git_bare,
+        id.clone(),
+        id.clone(),
+        "side tip".into(),
+    )
+    .expect("commit side tip");
+    update_ref(
+        &case_dir,
+        case_dir.join(".git"),
+        branch_ref_path(test_git_dir(), "side"),
+        &side_tip,
+    )
+    .expect("create side branch");
+
+    fs::remove_file(case_dir.join("branch.txt")).unwrap();
+    fs::write(case_dir.join("common.txt"), "main version\n").unwrap();
+    fs::write(case_dir.join("main.txt"), "main\n").unwrap();
+    run_git(&case_dir, &["add", "-A"]);
+    let _main_tip = commit::commit(
+        &case_dir,
+        &git_bare,
+        id.clone(),
+        id.clone(),
+        "main tip".into(),
+    )
+    .expect("commit main tip");
+
+    crate::checkout::checkout_branch(&case_dir, test_git_dir(), "side")
+        .expect("checkout side branch");
+
+    assert_eq!(
+        fs::read_to_string(case_dir.join("branch.txt")).unwrap(),
+        "side\n"
+    );
+    assert_eq!(
+        fs::read_to_string(case_dir.join("common.txt")).unwrap(),
+        "side version\n"
+    );
+    assert!(
+        !case_dir.join("main.txt").exists(),
+        "main-only file removed"
+    );
+
+    let head = fs::read_to_string(case_dir.join(".git/HEAD")).unwrap();
+    assert_eq!(head.trim(), "ref: refs/heads/side");
+    let side_ref = fs::read_to_string(case_dir.join(".git/refs/heads/side")).unwrap();
+    assert_eq!(side_ref.trim(), hex::encode(side_tip.as_bytes()));
+}
+
+#[test]
+fn checkout_reports_untracked_file_conflict_before_writing() {
+    let case_dir = make_case_dir("checkout_untracked_conflict");
+    let id = test_commit_identity();
+
+    run_git(&case_dir, &["init"]);
+    let git_bare = fs::canonicalize(case_dir.join(".git")).unwrap();
+
+    fs::write(case_dir.join("conflict.txt"), "tracked in target\n").unwrap();
+    fs::write(case_dir.join("stable.txt"), "target stable\n").unwrap();
+    run_git(&case_dir, &["add", "-A"]);
+    let target = commit::commit(
+        &case_dir,
+        &git_bare,
+        id.clone(),
+        id.clone(),
+        "target".into(),
+    )
+    .expect("commit target");
+
+    fs::remove_file(case_dir.join("conflict.txt")).unwrap();
+    fs::write(case_dir.join("stable.txt"), "current stable\n").unwrap();
+    run_git(&case_dir, &["add", "-A"]);
+    let current = commit::commit(
+        &case_dir,
+        &git_bare,
+        id.clone(),
+        id.clone(),
+        "current".into(),
+    )
+    .expect("commit current");
+
+    fs::write(case_dir.join("conflict.txt"), "untracked local\n").unwrap();
+    let err = crate::checkout::checkout_commit(&case_dir, test_git_dir(), target)
+        .expect_err("checkout should reject untracked conflict");
+    assert!(
+        err.to_string().contains("untracked working tree file"),
+        "unexpected error: {err:?}"
+    );
+
+    assert_eq!(
+        fs::read_to_string(case_dir.join("conflict.txt")).unwrap(),
+        "untracked local\n",
+        "untracked file preserved"
+    );
+    assert_eq!(
+        fs::read_to_string(case_dir.join("stable.txt")).unwrap(),
+        "current stable\n",
+        "tracked file was not overwritten after failed checkout"
+    );
+    let raw_head = fs::read_to_string(case_dir.join(".git/HEAD")).unwrap();
+    assert!(
+        raw_head.trim().ends_with("master") || raw_head.trim().ends_with("main"),
+        "HEAD remains symbolic after failed checkout: {raw_head:?}"
+    );
+    let current_hex = hex::encode(current.as_bytes());
+    let head_commit = git_stdout(&case_dir, &["rev-parse", "HEAD"])
+        .lines()
+        .next()
+        .unwrap()
+        .trim()
+        .to_string();
+    assert_eq!(head_commit, current_hex);
+}
