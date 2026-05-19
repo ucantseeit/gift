@@ -92,6 +92,9 @@ pub fn checkout(commit_id: ObjectHash, is_detach: bool) {...}
 3. 调用`IndexRootTree::to_worktree`, 将`index`区对应的文件树放入工作区
 4. 更新HEAD的内容, 注意区分是否detach
 
+### 八、重构结构
+1. Object类型不应该有object_name这一属性, 它是Object类型的键而非值的一部分, 现在这种处理方式会造成冗余
+2. index的entries属性应该是BTreeMap而非Vec
 
 
 

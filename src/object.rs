@@ -38,6 +38,10 @@ impl ObjectSha {
             ObjectSha::SHA256(h) => h.as_slice(),
         }
     }
+
+    pub fn to_string(&self) -> String {
+        hex::encode(self.as_bytes())
+    }
 }
 
 pub enum Object {
@@ -47,10 +51,23 @@ pub enum Object {
     Tag, // TODO
 }
 
+type LooseReader = BufReader<ZlibDecoder<BufReader<File>>>;
+
 impl Object {
+    pub fn open_loose_object_bufreader(
+        git_dir: &Path, oid: &str
+    ) -> Result< LooseReader > {
+        let loose = git_paths::loose_object_path(git_dir, &oid);
+        let f = File::open(&loose).with_context(|| format!("open object {}", loose.display()))?;
+        let raw = BufReader::new(f);
+        let zlib = ZlibDecoder::new(raw);
+        let br = BufReader::new(zlib);
+        Ok(br)
+    }
+
     /// 从 zlib 解压流上读取 object 类型名（`blob` / `tree` / …），类似 `git cat-file -t`
-    fn read_object_type<R: BufRead>(
-        reader: &mut BufReader<&mut ZlibDecoder<R>>,
+    pub fn read_object_type<R: BufRead>(
+        reader: &mut BufReader<ZlibDecoder<R>>,
     ) -> anyhow::Result<String> {
         let mut buf = Vec::new();
         reader.read_until(b' ', &mut buf)?;
@@ -59,22 +76,24 @@ impl Object {
     }
 
     /// 跳过 `git cat-file` 头部里类型之后的 `<ascii-size>\0`（与 `read_object_type` 连用）。
-    fn skip_git_object_size_nul<R: BufRead>(reader: &mut R) -> anyhow::Result<()> {
+    pub fn skip_git_object_size_nul<R: BufRead>(reader: &mut R) -> anyhow::Result<()> {
         let mut buf = Vec::new();
         reader.read_until(b'\0', &mut buf)?;
         Ok(())
     }
 
-    /// 读取 `.git/objects` 下 loose 对象的类型名（`commit` / `tree` / `blob` / …）
-    pub fn read_loose_object_kind(git_dir: &Path, oid: &ObjectSha) -> Result<String> {
-        let hex = hex::encode(oid.as_bytes());
-        let loose = git_paths::loose_object_path(git_dir, &hex);
-        let f = File::open(&loose).with_context(|| format!("open object {}", loose.display()))?;
-        let raw = BufReader::new(f);
-        let mut zlib = ZlibDecoder::new(raw);
-        let mut br = BufReader::new(&mut zlib);
-        Object::read_object_type(&mut br)
-    }
+    // 读取 `.git/objects` 下 loose 对象的类型名（`commit` / `tree` / `blob` / …）
+    // pub fn read_loose_object_kind(git_dir: &Path, oid: &ObjectSha) -> Result<String> {
+    //     // TODO: 提取这个部分, 合并成辅助函数
+    //     let hex = hex::encode(oid.as_bytes());
+    //     let loose = git_paths::loose_object_path(git_dir, &hex);
+    //     let f = File::open(&loose).with_context(|| format!("open object {}", loose.display()))?;
+    //     let raw = BufReader::new(f);
+    //     let mut zlib = ZlibDecoder::new(raw);
+    //     let mut br = BufReader::new(&mut zlib);
+        
+    //     Object::read_object_type(&mut br)
+    // }
 }
 
 pub struct BlobObject {
@@ -137,7 +156,7 @@ impl CommitObject {
     /// 从 zlib 解压后的 commit payload 流解析（调用方已跳过 `commit <size>\0` 头）
     pub fn read_commit<R: BufRead>(
         object_name: ObjectSha,
-        reader: &mut BufReader<&mut ZlibDecoder<R>>,
+        reader: &mut BufReader<ZlibDecoder<R>>,
         is_sha1: bool,
     ) -> Result<CommitObject> {
         let mut headers: Vec<ParsedHeader> = Vec::new();
@@ -232,19 +251,17 @@ impl CommitObject {
     }
 
     /// 读取 `.git/objects` 下的 loose commit（与 `read_loose_tree` 同层）
-    pub fn read_loose_commit(repo: &Path, hex_oid: &str) -> CommitObject {
+    pub fn read_loose_commit(git_dir: &Path, hex_oid: &str) -> CommitObject {
         let is_sha1 = hex_oid.len() == 40;
-        let loose = git_paths::loose_object_path(repo, hex_oid);
+        let loose = git_paths::loose_object_path(git_dir, hex_oid);
         assert!(
             loose.is_file(),
             "loose object missing: {}",
             loose.display()
         );
 
-        let f = File::open(&loose).expect("open loose object");
-        let raw = BufReader::new(f);
-        let mut zlib = ZlibDecoder::new(raw);
-        let mut br = BufReader::new(&mut zlib);
+        let mut br = Object::open_loose_object_bufreader(git_dir, &hex_oid)
+            .expect(&format!("cannot open object with oid {}", hex_oid));
 
         let kind = Object::read_object_type(&mut br).expect("read type");
         assert_eq!(kind, "commit", "cat-file -t should be commit");
@@ -364,7 +381,7 @@ pub struct TreeEntry {
 
 impl TreeEntry {
     pub fn read_entry<R: BufRead>(
-        reader: &mut BufReader<&mut ZlibDecoder<R>>,
+        reader: &mut BufReader<ZlibDecoder<R>>,
         is_sha1: bool
     ) -> Result<Option<(OsString, Self)> > {
         let mut mode_buf: Vec<u8> = Vec::new();
@@ -440,7 +457,7 @@ impl TreeObject {
 
     pub fn read_tree<R: BufRead>(
         object_name: ObjectSha,
-        reader: &mut BufReader<&mut ZlibDecoder<R>>,
+        reader: &mut BufReader<ZlibDecoder<R>>,
         is_sha1: bool
     ) -> Result<TreeObject> {
         let mut entries: BTreeMap<OsString, TreeEntry> = BTreeMap::default();
@@ -466,25 +483,23 @@ impl TreeObject {
         content
     }
 
-    pub fn read_loose_tree(repo: &Path, hex_oid: &str) -> TreeObject {
-        let loose = git_paths::loose_object_path(repo, hex_oid);
+    pub fn read_loose_tree(git_dir: &Path, oid: &str) -> TreeObject {
+        let loose = git_paths::loose_object_path(git_dir, oid);
         assert!(
             loose.is_file(),
             "loose object missing: {}",
             loose.display()
         );
 
-        let f = File::open(&loose).expect("open loose object");
-        let raw = BufReader::new(f);
-        let mut zlib = ZlibDecoder::new(raw);
-        let mut br = BufReader::new(&mut zlib);
+        let mut br = Object::open_loose_object_bufreader(git_dir, oid)
+                .expect(&format!("cannot open object with oid {}", oid));
 
         let kind = Object::read_object_type(&mut br).expect("read type");
         assert_eq!(kind, "tree", "cat-file -t should be tree");
 
         Object::skip_git_object_size_nul(&mut br).expect("skip size\\0");
 
-        let oid_bytes: [u8; 20] = hex::decode(hex_oid)
+        let oid_bytes: [u8; 20] = hex::decode(oid)
             .expect("hex oid")
             .try_into()
             .expect("oid len");
@@ -535,4 +550,41 @@ pub fn write_hash_object(
     let compressed = encoder.finish()?;
     object_file.write_all(&compressed)?;
     Ok(())
+}
+
+
+impl Object {
+    pub fn read_object_content<R: BufRead>(
+        obj_type: &str, 
+        oid: ObjectSha,
+        reader: &mut BufReader<ZlibDecoder<R>>
+    ) -> Result<Object> {    
+        if obj_type == "blob" {
+            return Ok(Object::Blob(BlobObject{object_name: oid.clone()}) )
+        } else if obj_type == "tree" {
+            let tree = TreeObject::read_tree(oid.clone(), reader, true)?;
+            return Ok(Object::Tree(tree))
+        } else if obj_type == "commit" {
+            let commit = CommitObject::read_commit(oid.clone(), reader, true)?;
+            return Ok(Object::Commit(commit))
+        } else {
+            bail!("unexpected type {obj_type}");
+        }
+    }
+
+    pub fn ensure_loose_object_kind(
+        git_dir: &Path,
+        hex_oid: &str,
+        expected_kind: &str,
+        ctx: &str,
+    ) -> Result<()> {
+        let mut br = Object::open_loose_object_bufreader(git_dir, &hex_oid)
+            .with_context(|| format!("{ctx}: object missing or unreadable for {hex_oid}"))?;
+        let got_kind = Object::read_object_type(&mut br)
+            .with_context(|| format!("{ctx}: cannot read type for {hex_oid}"))?;
+        if got_kind != expected_kind {
+            bail!("{ctx}: expected loose {expected_kind}, got {got_kind:?}");
+        }
+        Ok(())
+    }
 }

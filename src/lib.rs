@@ -10,6 +10,7 @@ pub mod index;
 pub mod commit;
 pub mod commit_identity;
 pub mod staging;
+pub mod checkout;
 
 #[cfg(test)]
 mod tests;

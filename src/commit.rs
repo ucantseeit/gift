@@ -70,16 +70,6 @@ pub fn commit(
     Ok(new_oid)
 }
 
-// resolve_parents的辅助函数, 确保oid对应的对象在objects/文件夹中, 并且是commit对象
-fn ensure_commit_object(git_abs: &Path, oid: &ObjectSha, ctx: &str) -> Result<()> {
-    let kind = Object::read_loose_object_kind(git_abs, oid)
-        .with_context(|| format!("{ctx}: read object type {}", hex::encode(oid.as_bytes())))?;
-    if kind != "commit" {
-        bail!("{ctx}: expected loose commit, got {kind:?}");
-    }
-    Ok(())
-}
-
 /// 得到Commit对象的 `parents`
 /// 目前不考虑merge， 故parent只会有一个
 /// 情况1: detached head(即HEAD文件中是一个oid), 那么parent的oid就是head里面包含的oid
@@ -87,7 +77,9 @@ fn ensure_commit_object(git_abs: &Path, oid: &ObjectSha, ctx: &str) -> Result<()
 fn resolve_parents(worktree: &Path, git_abs: &Path, head: &Head) -> Result<Vec<ObjectSha>> {
     match head {
         Head::TargetCommit(oid) => {
-            ensure_commit_object(git_abs, oid, "detached HEAD")?;
+            Object::ensure_loose_object_kind(
+                git_abs, &oid.to_string(), 
+                "commit", "detached HEAD")?;
             Ok(vec![oid.clone()])
         }
         Head::TargetBranch { branch_ref_path } => {
@@ -116,7 +108,9 @@ fn resolve_parents(worktree: &Path, git_abs: &Path, head: &Head) -> Result<Vec<O
                 .try_into()
                 .map_err(|v: Vec<u8>| anyhow::anyhow!("ref oid length {}", v.len()))?;
             let oid = ObjectSha::SHA1(bytes);
-            ensure_commit_object(git_abs, &oid, "branch tip")?;
+            Object::ensure_loose_object_kind(
+                git_abs, &oid.to_string(), 
+                "commit", "branch tip")?;
             Ok(vec![oid])
         }
     }

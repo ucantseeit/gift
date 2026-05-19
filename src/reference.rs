@@ -6,29 +6,12 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
-use crate::git_paths::resolve_git_dir;
 use crate::object::{Object, ObjectSha};
 
 /// 对齐文件在磁盘上的语义：一行 40 位 hex（commit OID）。路径由 `read_ref` / `update_ref` 的参数传入，不放在本结构里。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ref {
     pub commit_id: ObjectSha,
-}
-
-fn ensure_loose_commit(
-    git_dir_abs: &Path, 
-    oid: &ObjectSha
-) -> Result<()> {
-    let kind = Object::read_loose_object_kind(git_dir_abs, oid).with_context(|| {
-        format!(
-            "object missing or unreadable for {}",
-            hex::encode(oid.as_bytes())
-        )
-    })?;
-    if kind != "commit" {
-        bail!("ref must point to commit, got object type {kind:?}");
-    }
-    Ok(())
 }
 
 /// 读取 ref；`path` 相对 worktree；`git_dir` 用于定位 `objects/` 做类型校验
@@ -39,7 +22,6 @@ pub fn read_ref(
 ) -> Result<Ref> {
     let path = path.as_ref();
     let full = worktree.join(path);
-    let gd = resolve_git_dir(worktree, git_dir.as_ref());
     let content = fs::read_to_string(&full).with_context(|| format!("read {}", full.display()))?;
     let line = content.trim();
     if line.starts_with("ref:") {
@@ -66,7 +48,9 @@ pub fn read_ref(
         .try_into()
         .map_err(|v: Vec<u8>| anyhow::anyhow!("oid length {}", v.len()))?;
     let commit_id = ObjectSha::SHA1(bytes);
-    ensure_loose_commit(&gd, &commit_id)?;
+    Object::ensure_loose_object_kind(
+        git_dir.as_ref(), &commit_id.to_string(), 
+        "commit", "read_ref")?;
     Ok(Ref { commit_id })
 }
 
@@ -80,8 +64,9 @@ pub fn update_ref(
     let ObjectSha::SHA1(_) = commit_id else {
         bail!("update_ref only supports SHA1 oids");
     };
-    let gd = resolve_git_dir(worktree, git_dir.as_ref());
-    ensure_loose_commit(&gd, commit_id)?;
+    Object::ensure_loose_object_kind(
+        git_dir.as_ref(), &commit_id.to_string(), 
+        "commit", "read_ref")?;
     let full = worktree.join(path.as_ref());
     if let Some(parent) = full.parent() {
         fs::create_dir_all(parent).with_context(|| format!("mkdir {}", parent.display()))?;
