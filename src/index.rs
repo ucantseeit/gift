@@ -565,6 +565,10 @@ pub mod index_tree {
             let hash = hex::encode(self.object_name.as_bytes());
             git_paths::loose_object_path(git_dir.as_ref(), &hash)
         }
+
+        pub fn new(file_mode: FileMode, object_name: ObjectSha) -> Self {
+            Self {file_mode, object_name}
+        }
     }
 
     pub enum TreeNode {
@@ -609,7 +613,7 @@ pub mod index_tree {
 
     // 根在working_tree文件夹
     pub struct IndexRootTree {
-        children: BTreeMap<OsString, TreeNode>
+        pub children: BTreeMap<OsString, TreeNode>
     }
 
     impl IndexRootTree {

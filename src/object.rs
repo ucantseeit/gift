@@ -81,19 +81,6 @@ impl Object {
         reader.read_until(b'\0', &mut buf)?;
         Ok(())
     }
-
-    // 读取 `.git/objects` 下 loose 对象的类型名（`commit` / `tree` / `blob` / …）
-    // pub fn read_loose_object_kind(git_dir: &Path, oid: &ObjectSha) -> Result<String> {
-    //     // TODO: 提取这个部分, 合并成辅助函数
-    //     let hex = hex::encode(oid.as_bytes());
-    //     let loose = git_paths::loose_object_path(git_dir, &hex);
-    //     let f = File::open(&loose).with_context(|| format!("open object {}", loose.display()))?;
-    //     let raw = BufReader::new(f);
-    //     let mut zlib = ZlibDecoder::new(raw);
-    //     let mut br = BufReader::new(&mut zlib);
-        
-    //     Object::read_object_type(&mut br)
-    // }
 }
 
 pub struct BlobObject {
