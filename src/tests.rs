@@ -18,6 +18,8 @@ use crate::git_paths::branch_ref_path;
 use crate::reference::{read_ref, update_ref};
 use crate::symbolic_ref::{read_symbolic_ref, write_symbolic_ref, SymbolicRef};
 
+use crate::status;
+
 /// `run_git` 在 worktree 下创建的标准 git 目录（相对 worktree，与 `.gift` 等区分）
 fn test_git_dir() -> &'static Path {
     Path::new(".git")
@@ -907,3 +909,31 @@ fn commit_on_detached_head_updates_oid_and_parent() {
     assert_eq!(parsed.message, b"while detached\n");
 }
 
+#[test]
+fn test_status_basic() {
+    let case_dir = make_case_dir("status_basic");
+    
+    run_git(&case_dir, &["init"]);
+    
+    // 创建文件并提交
+    fs::write(case_dir.join("file.txt"), "v1\n").unwrap();
+    run_git(&case_dir, &["add", "file.txt"]);
+    run_git(&case_dir, &["commit", "-m", "initial"]);
+    
+    // 修改文件
+    fs::write(case_dir.join("file.txt"), "v2\n").unwrap();
+    
+    let worktree = &case_dir;
+    let git_dir = test_git_dir();
+    let status = status::status(worktree, git_dir).expect("status failed");
+    
+    // 验证状态
+    assert_eq!(status.staged.len(), 0, "should have no staged changes");
+    assert_eq!(status.unstaged.len(), 1, "should have 1 unstaged change");
+    assert_eq!(status.untracked.len(), 0, "should have no untracked files");
+    
+    if let Some(entry) = status.unstaged.first() {
+        assert_eq!(entry.change_type, status::ChangeType::Modified);
+        assert!(entry.path.ends_with("file.txt"));
+    }
+}

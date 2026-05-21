@@ -11,6 +11,8 @@ pub mod commit;
 pub mod commit_identity;
 pub mod staging;
 
+pub mod status;
+
 #[cfg(test)]
 mod tests;
 
