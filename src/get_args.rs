@@ -1,9 +1,12 @@
+//！ 获取命令行参数,接入对应函数
 use crate::{init, 
     object::{hash_object, write_hash_object}, 
     staging::stage_paths,
     git_paths::discover_repo_from_cwd,
     commit::commit,
-    commit_identity::identities_from_git_env
+    commit_identity::identities_from_git_env,
+    reference::branch,
+    checkout::{CheckoutTarget, checkout}
 };
 use anyhow::Ok;
 use clap::{Parser, Subcommand};
@@ -22,6 +25,13 @@ enum GiftCommand {
     Commit {
         #[arg(short = 'm')]
         message: String
+    },
+    //此时实现的是必须要加name的，即创建新分支功能
+    Branch{
+        name: String
+    },
+    Checkout{
+        target: CheckoutTarget
     },
 
     Status,
@@ -55,7 +65,7 @@ pub fn get_args_and_go() -> Result<(), anyhow::Error>  {
         GiftCommand::HashObject {write, file}=> {
             let my_obj_path = PathBuf::from(file);
             let (obj_hash, obj_content) = hash_object(my_obj_path).unwrap();
-            println!("{:?}", obj_hash);
+            println!("{}",obj_hash.to_string());
             if write{
                 let root = ".gift".to_string();
                 write_hash_object(root, &obj_hash, &obj_content)?;
@@ -76,8 +86,6 @@ pub fn get_args_and_go() -> Result<(), anyhow::Error>  {
             Ok(())
         },
 
-        GiftCommand::Status => {println!("Status"); Ok(())},
-
         GiftCommand::Commit {message}=> {
             let abs_path = discover_repo_from_cwd()?;
             let (auther_about, committer_about) = identities_from_git_env()?;
@@ -91,8 +99,22 @@ pub fn get_args_and_go() -> Result<(), anyhow::Error>  {
                 auther_about, 
                 committer_about, message
             )?;
-            println!("the commit ID:{:?}", sha);
+            println!("the commit ID:{}", sha.to_string());
             Ok(())
         }
+
+        GiftCommand::Branch {name}=> {
+            let abs_path = discover_repo_from_cwd()?;
+            let head_path = abs_path.git_dir.join("HEAD");
+            branch(head_path.as_path(), &name)?;
+            Ok(())
+        },
+        GiftCommand::Checkout { target } =>{
+            let abs_path = discover_repo_from_cwd()?;
+            checkout(&abs_path.work_tree, abs_path.git_dir, target)?;
+            Ok(())
+        },
+        GiftCommand::Status => {println!("Status"); Ok(())},
+
     }
 }

@@ -6,7 +6,7 @@ use std::io::Read;
 use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::{Path, PathBuf};
-
+use std::str::FromStr;
 use crate::git_paths::{branch_ref_path, resolve_git_dir};
 use crate::head::Head;
 use crate::index::index_tree::{BlobLeaf, IndexRootTree, TreeNode};
@@ -18,6 +18,30 @@ use crate::reference::read_ref;
 pub enum CheckoutTarget {
     Commit(ObjectSha),
     Branch(String),
+}
+impl FromStr for CheckoutTarget {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        if (s.len() == 40 || s.len() == 64) && s.chars().all(|c| c.is_ascii_hexdigit()) {
+            let bytes = hex::decode(s).map_err(|e| e.to_string())?;
+            match bytes.len() {
+                20 => {
+                    let mut arr = [0u8; 20];
+                    arr.copy_from_slice(&bytes);
+                    Ok(CheckoutTarget::Commit(ObjectSha::SHA1(arr)))
+                }
+                32 => {
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(&bytes);
+                    Ok(CheckoutTarget::Commit(ObjectSha::SHA256(arr)))
+                }
+                _ => Err("Invalid SHA length".to_string()),
+            }
+        } else {
+            Ok(CheckoutTarget::Branch(s.to_string()))
+        }
+    }
 }
 
 pub fn checkout_commit(
