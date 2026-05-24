@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 /// # 说明
 /// - 不会遍历进入 `git_dir` 内部；路径规范化后的叶子若落在 `git_dir` 下会报错。
 /// - 暂未实现 `.gitignore`。
+/// - 暂未实现同步删除工作区文件的操作。
 pub fn stage_paths(
     git_dir: impl AsRef<Path>,
     work_tree: impl AsRef<Path>,

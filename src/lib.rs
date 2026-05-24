@@ -18,6 +18,8 @@ pub fn run() -> anyhow::Result<()> {
     get_args_and_go()
 }
 
+pub mod status;
+
 #[cfg(test)]
 mod tests;
 
