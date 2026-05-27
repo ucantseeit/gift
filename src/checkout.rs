@@ -104,7 +104,7 @@ fn resolve_checkout_target(
         }
         CheckoutTarget::Branch(branch_name) => {
             let branch_ref_path = branch_ref_path(git_rel, &branch_name);
-            let reference = read_ref(worktree, git_abs, &branch_ref_path)
+            let reference = read_ref(worktree, git_rel, &branch_ref_path)
                 .with_context(|| format!("read branch {}", branch_name))?;
             let commit_id = reference.commit_id;
             let next_head = Head::TargetBranch { branch_ref_path };

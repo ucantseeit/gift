@@ -48,8 +48,9 @@ pub fn read_ref(
         .try_into()
         .map_err(|v: Vec<u8>| anyhow::anyhow!("oid length {}", v.len()))?;
     let commit_id = ObjectSha::SHA1(bytes);
+    let git_abs = worktree.join(git_dir.as_ref());
     Object::ensure_loose_object_kind(
-        git_dir.as_ref(), &commit_id.to_string(), 
+        &git_abs, &commit_id.to_string(), 
         "commit", "read_ref")?;
     Ok(Ref { commit_id })
 }
@@ -64,8 +65,9 @@ pub fn update_ref(
     let ObjectSha::SHA1(_) = commit_id else {
         bail!("update_ref only supports SHA1 oids");
     };
+    let git_abs = worktree.join(git_dir.as_ref());
     Object::ensure_loose_object_kind(
-        git_dir.as_ref(), &commit_id.to_string(), 
+        &git_abs, &commit_id.to_string(), 
         "commit", "read_ref")?;
     let full = worktree.join(path.as_ref());
     if let Some(parent) = full.parent() {

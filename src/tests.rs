@@ -976,7 +976,7 @@ fn checkout_branch_restores_tip_and_keeps_symbolic_head() {
     .expect("commit side tip");
     update_ref(
         &case_dir,
-        case_dir.join(".git"),
+        test_git_dir(),
         branch_ref_path(test_git_dir(), "side"),
         &side_tip,
     )
@@ -1226,4 +1226,130 @@ fn test_load_head_tree_debug() {
     
     eprintln!("✓ All verifications passed");
     eprintln!("=== End test ===\n");
+}
+
+#[test]
+fn test_status_functionality() {
+    let case_dir = make_case_dir("status_test");
+    let worktree = &case_dir;
+    let git_dir = Path::new(".git");
+    
+    eprintln!("\n=== Testing git status functionality ===\n");
+    
+    // 初始化仓库
+    run_git(worktree, &["init"]);
+    
+    // 创建初始文件并提交
+    fs::write(worktree.join("file1.txt"), "initial content\n").unwrap();
+    fs::write(worktree.join("file2.txt"), "initial content\n").unwrap();
+    fs::create_dir_all(worktree.join("subdir")).unwrap();
+    fs::write(worktree.join("subdir").join("file3.txt"), "initial content\n").unwrap();
+    
+    run_git(worktree, &["add", "file1.txt", "file2.txt", "subdir/file3.txt"]);
+    run_git(worktree, &["commit", "-m", "initial commit"]);
+    
+    eprintln!("✓ Initial commit created");
+    
+    // 测试1: 初始状态应该没有改动
+    let status = crate::status::status(worktree, git_dir).expect("status");
+    assert_eq!(status.staged.len(), 0, "No staged changes expected");
+    assert_eq!(status.unstaged.len(), 0, "No unstaged changes expected");
+    assert_eq!(status.untracked.len(), 0, "No untracked files expected");
+    eprintln!("✓ Test 1 passed: Clean state");
+    
+    // 测试2: 修改已跟踪文件（未暂存）
+    fs::write(worktree.join("file1.txt"), "modified content\n").unwrap();
+    let status = crate::status::status(worktree, git_dir).expect("status");
+    assert_eq!(status.unstaged.len(), 1, "Should have 1 unstaged change");
+    assert_eq!(status.unstaged[0].path, PathBuf::from("file1.txt"));
+    assert_eq!(status.unstaged[0].change_type, crate::status::ChangeType::Modified);
+    eprintln!("✓ Test 2 passed: Modified tracked file (unstaged)");
+    
+    // 测试3: 暂存修改
+    run_git(worktree, &["add", "file1.txt"]);
+    let status = crate::status::status(worktree, git_dir).expect("status");
+    assert_eq!(status.staged.len(), 1, "Should have 1 staged change");
+    assert_eq!(status.staged[0].path, PathBuf::from("file1.txt"));
+    assert_eq!(status.staged[0].change_type, crate::status::ChangeType::Modified);
+    assert_eq!(status.unstaged.len(), 0, "No unstaged changes expected after add");
+    eprintln!("✓ Test 3 passed: Staged modification");
+    
+    // 测试4: 新文件（未追踪）
+    fs::write(worktree.join("new_file.txt"), "new file\n").unwrap();
+    let status = crate::status::status(worktree, git_dir).expect("status");
+    assert_eq!(status.untracked.len(), 1, "Should have 1 untracked file");
+    assert_eq!(status.untracked[0], PathBuf::from("new_file.txt"));
+    eprintln!("✓ Test 4 passed: Untracked file");
+    
+    // 测试5: 删除文件（未暂存）
+    fs::remove_file(worktree.join("file2.txt")).unwrap();
+    let status = crate::status::status(worktree, git_dir).expect("status");
+    let deleted: Vec<_> = status.unstaged.iter()
+        .filter(|e| e.change_type == crate::status::ChangeType::Deleted)
+        .collect();
+    assert_eq!(deleted.len(), 1, "Should have 1 deleted file");
+    assert_eq!(deleted[0].path, PathBuf::from("file2.txt"));
+    eprintln!("✓ Test 5 passed: Deleted file (unstaged)");
+    
+    // 测试6: 暂存删除
+    run_git(worktree, &["add", "file2.txt"]);
+    let status = crate::status::status(worktree, git_dir).expect("status");
+    let staged_deleted: Vec<_> = status.staged.iter()
+        .filter(|e| e.change_type == crate::status::ChangeType::Deleted)
+        .collect();
+    assert_eq!(staged_deleted.len(), 1, "Should have 1 staged deletion");
+    assert_eq!(staged_deleted[0].path, PathBuf::from("file2.txt"));
+    eprintln!("✓ Test 6 passed: Staged deletion");
+    
+    // 测试7: 添加新文件（应该从 untracked 移除）
+    run_git(worktree, &["add", "new_file.txt"]);
+    let status = crate::status::status(worktree, git_dir).expect("status");
+    assert_eq!(status.untracked.len(), 0, "New file should no longer be untracked after add");
+    assert_eq!(status.staged.len(), 3, "Should have staged: modified file1.txt, deleted file2.txt, new_file.txt");
+    eprintln!("✓ Test 7 passed: New file staged");
+    
+    // 测试8: 子目录中的新文件（未追踪）
+    fs::write(worktree.join("subdir").join("file4.txt"), "new file in subdir\n").unwrap();
+    let status = crate::status::status(worktree, git_dir).expect("status");
+    assert_eq!(status.untracked.len(), 1, "Should have untracked file in subdir");
+    assert_eq!(status.untracked[0], PathBuf::from("subdir/file4.txt"));
+    eprintln!("✓ Test 8 passed: Untracked file in subdirectory");
+    
+    // 测试9: 提交所有改动（不包括 file4.txt）
+    run_git(worktree, &["commit", "-m", "second commit"]);
+    let status = crate::status::status(worktree, git_dir).expect("status");
+    assert_eq!(status.staged.len(), 0, "No staged changes after commit");
+    assert_eq!(status.unstaged.len(), 0, "No unstaged changes after commit");
+    // 注意：subdir/file4.txt 仍然存在，应该是 untracked
+    assert_eq!(status.untracked.len(), 1, "Should have 1 untracked file (subdir/file4.txt)");
+    assert_eq!(status.untracked[0], PathBuf::from("subdir/file4.txt"));
+    eprintln!("✓ Test 9 passed: After commit, only untracked file4.txt remains");
+    
+    // 测试10: 清理 untracked 文件后再提交
+    fs::remove_file(worktree.join("subdir").join("file4.txt")).unwrap();
+    let status = crate::status::status(worktree, git_dir).expect("status");
+    assert_eq!(status.untracked.len(), 0, "No untracked files after removal");
+    eprintln!("✓ Test 10 passed: Clean state after removing untracked file");
+    
+    // 测试11: 混合场景 - 同时有 staged、unstaged 和 untracked
+    fs::write(worktree.join("file1.txt"), "third version\n").unwrap();  // unstaged modify
+    fs::write(worktree.join("file2.txt"), "new content\n").unwrap();    // file2.txt was deleted, now recreated (untracked)
+    fs::write(worktree.join("new_file2.txt"), "another new file\n").unwrap(); // untracked
+    run_git(worktree, &["add", "file1.txt"]);  // stage modification
+    
+    let status = crate::status::status(worktree, git_dir).expect("status");
+    
+    // 检查 staged (file1.txt modified)
+    let staged_modified: Vec<_> = status.staged.iter()
+        .filter(|e| e.change_type == crate::status::ChangeType::Modified)
+        .collect();
+    assert_eq!(staged_modified.len(), 1);
+    assert_eq!(staged_modified[0].path, PathBuf::from("file1.txt"));
+    
+    // 检查 untracked (应该有 new_file2.txt 和 file2.txt)
+    assert!(status.untracked.len() >= 2, "Should have at least 2 untracked files");
+    
+    eprintln!("✓ Test 11 passed: Mixed scenario");
+    
+    eprintln!("\n=== All status tests passed! ===\n");
 }
