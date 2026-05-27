@@ -1110,3 +1110,120 @@ fn test_status_basic() {
         assert!(entry.path.ends_with("file.txt"));
     }
 }
+
+#[test]
+fn test_load_head_tree_debug() {
+    let case_dir = make_case_dir("load_head_tree_debug");
+    
+    // 初始化仓库并创建一次提交
+    run_git(&case_dir, &["init"]);
+    
+    fs::write(case_dir.join("file1.txt"), "content 1\n").unwrap();
+    fs::write(case_dir.join("file2.txt"), "content 2\n").unwrap();
+    fs::create_dir_all(case_dir.join("subdir")).unwrap();
+    fs::write(case_dir.join("subdir").join("file3.txt"), "content 3\n").unwrap();
+    
+    run_git(&case_dir, &["add", "."]);
+    run_git(&case_dir, &["commit", "-m", "initial commit"]);
+    
+    let worktree = &case_dir;
+    let git_dir = Path::new(".git");
+    let git_abs = crate::git_paths::resolve_git_dir(worktree, git_dir);
+    
+    eprintln!("\n=== Testing load_head_tree ===");
+    eprintln!("worktree: {:?}", worktree);
+    eprintln!("git_dir (relative): {:?}", git_dir);
+    eprintln!("git_abs (absolute): {:?}", git_abs);
+    
+    // 步骤1: 读取 HEAD
+    eprintln!("\n--- Step 1: Reading HEAD ---");
+    let head = match crate::head::Head::read(worktree, git_dir) {
+        Ok(h) => {
+            eprintln!("✓ HEAD read successfully: {:?}", h);
+            h
+        }
+        Err(e) => {
+            eprintln!("✗ Failed to read HEAD: {}", e);
+            panic!("Cannot proceed without HEAD");
+        }
+    };
+
+    // 步骤2: 获取当前 commit OID
+    eprintln!("\n--- Step 2: Getting current commit OID ---");
+    let commit_oid = match head.current_commit(worktree, git_dir) {
+        Ok(oid) => {
+            eprintln!("✓ Current commit OID: {}", oid.to_string());
+            oid
+        }
+        Err(e) => {
+            eprintln!("✗ Failed to get current commit: {}", e);
+            panic!("Cannot proceed without commit OID");
+        }
+    };
+    
+    // 步骤3: 读取 commit 对象
+    eprintln!("\n--- Step 3: Reading commit object ---");
+    let commit_hex = commit_oid.to_string();
+    let commit_obj_path = git_abs.join("objects").join(&commit_hex[0..2]).join(&commit_hex[2..]);
+    eprintln!("Commit object path: {:?}", commit_obj_path);
+    eprintln!("Commit object exists: {}", commit_obj_path.exists());
+    
+    let commit_obj = CommitObject::read_loose_commit(&git_abs, &commit_hex);
+    eprintln!("✓ Commit object read successfully");
+    eprintln!("  - Tree OID: {}", commit_obj.tree.to_string());
+    eprintln!("  - Parent count: {}", commit_obj.parents.len());
+    
+    // 步骤4: 读取 tree 对象
+    eprintln!("\n--- Step 4: Reading tree object ---");
+    let tree_oid = commit_obj.tree;
+    let tree_hex = tree_oid.to_string();
+    let tree_obj_path = git_abs.join("objects").join(&tree_hex[0..2]).join(&tree_hex[2..]);
+    eprintln!("Tree object path: {:?}", tree_obj_path);
+    eprintln!("Tree object exists: {}", tree_obj_path.exists());
+    
+    let tree_obj = TreeObject::read_loose_tree(&git_abs, &tree_hex);
+    eprintln!("✓ Tree object read successfully");
+    eprintln!("  - Entries count: {}", tree_obj.entries().len());
+    
+    // 步骤5: 调用 load_head_tree
+    eprintln!("\n--- Step 5: Calling load_head_tree ---");
+    let head_tree_result = crate::status::load_head_tree(worktree, git_dir);
+    
+    match &head_tree_result {
+        Ok(Some(head_tree)) => {
+            eprintln!("✓ load_head_tree returned Some(HeadTree)");
+            eprintln!("  HeadTree entries count: {}", head_tree.entries().len());
+            eprintln!("\n  All entries (path -> hash):");
+            
+            let mut paths: Vec<_> = head_tree.entries().keys().collect();
+            paths.sort();
+            
+            for path_bytes in paths {
+                let path_str = String::from_utf8_lossy(path_bytes);
+                let hash = head_tree.get_hash(path_bytes).unwrap();
+                eprintln!("    - {} -> {}", path_str, hash.to_string());
+            }
+        }
+        Ok(None) => {
+            eprintln!("⚠ load_head_tree returned None (no HEAD commit)");
+        }
+        Err(e) => {
+            eprintln!("✗ load_head_tree returned error: {}", e);
+        }
+    }
+    
+    // 验证结果
+    eprintln!("\n--- Step 6: Verification ---");
+    assert!(head_tree_result.is_ok(), "load_head_tree should not error");
+    
+    let head_tree = head_tree_result.as_ref().unwrap().as_ref().unwrap();
+    assert_eq!(head_tree.entries().len(), 3, "Should have 3 files (file1.txt, file2.txt, subdir/file3.txt)");
+    
+    // 验证文件是否都在
+    assert!(head_tree.contains_path(b"file1.txt"), "file1.txt should be in HEAD tree");
+    assert!(head_tree.contains_path(b"file2.txt"), "file2.txt should be in HEAD tree");
+    assert!(head_tree.contains_path(b"subdir/file3.txt"), "subdir/file3.txt should be in HEAD tree");
+    
+    eprintln!("✓ All verifications passed");
+    eprintln!("=== End test ===\n");
+}
