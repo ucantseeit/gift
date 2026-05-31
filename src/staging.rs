@@ -14,11 +14,16 @@ use std::path::{Path, PathBuf};
 ///
 /// - **`git_abs`**：Git 目录（内含 `objects/`、`index`），可为 `.git`、`.gift` 等。
 /// - **`worktree`**：工作区根目录；index 中的路径为其相对路径（经 [`index::index_path_bytes`]）。
-/// - **`inputs`**：用户给出的路径列表；相对路径相对于**进程当前工作目录**解析，再规范化为绝对路径并校验落在 `worktree` 内。
+/// - **`inputs`**：待暂存路径列表。
 /// - **`recursive_dirs`**：为 `true` 时递归展开目录内的文件与符号链接；为 `false` 时若某条路径为目录则返回错误。
 ///
+/// # 契约（调用方负责保证）
+/// - `git_abs`、`worktree`、`inputs` 中每条路径均为已 `canonicalize` 的绝对路径。
+/// - 每条 input 均落在 `worktree` 下且不在 `git_abs` 下。
+/// - 如需从用户原始输入（相对路径、未验证）构造上述路径，请先调用 [`resolve_stage_inputs`]。
+///
 /// # 说明
-/// - 不会遍历进入 `git_abs` 内部；路径规范化后的叶子若落在 `git_abs` 下会报错。
+/// - 不会遍历进入 `git_abs` 内部；叶子若落在 `git_abs` 下会报错。
 /// - 暂未实现 `.gitignore`。
 /// - 暂未实现同步删除工作区文件的操作。
 pub fn stage_paths(
@@ -31,27 +36,10 @@ pub fn stage_paths(
         bail!("no paths to stage");
     }
 
-    //fs::canonicalize的功能：
-    //1.解析符号链接（比如说symlink快捷方式）
-    //2.展开相对路径转换成绝对路径(并且会展开../.)
-    //3.验证路径存在
-    let worktree = fs::canonicalize(worktree)?;
-    let git_abs = fs::canonicalize(git_abs)?;
-    // 用户可能不在worktree目录下运行git add操作，所以需要cwd
-    let cwd = std::env::current_dir()?;
-
-    // 将inputs转换成绝对路径
-    let mut resolved_roots = BTreeSet::<PathBuf>::new();
-    for input in inputs {
-        let p = resolve_under_worktree(input, &cwd, &worktree)?;
-        ensure_not_inside_git_abs(&p, &git_abs)?;
-        resolved_roots.insert(p);
-    }
-
     // 收集所有的"叶子文件"
     let mut leaves = BTreeSet::<PathBuf>::new();
-    for root in &resolved_roots {
-        collect_leaves(root, &git_abs, recursive_dirs, &mut leaves)?;
+    for root in inputs {
+        collect_leaves(root, git_abs, recursive_dirs, &mut leaves)?;
     }
 
     
@@ -86,6 +74,24 @@ pub fn stage_paths(
     })?;
 
     Ok(())
+}
+
+/// 将用户原始输入路径规范化为 [`stage_paths`] 所要求的 canon 绝对路径列表。
+///
+/// 相对路径相对于**进程当前工作目录**解析，然后 canonicalize，再校验落在 `worktree` 内且不在 `git_abs` 内。
+pub fn resolve_stage_inputs(
+    inputs: &[PathBuf],
+    worktree: &Path,
+    git_abs: &Path,
+) -> Result<Vec<PathBuf>> {
+    let cwd = std::env::current_dir()?;
+    let mut resolved = Vec::new();
+    for input in inputs {
+        let p = resolve_under_worktree(input, &cwd, worktree)?;
+        ensure_not_inside_git_abs(&p, git_abs)?;
+        resolved.push(p);
+    }
+    Ok(resolved)
 }
 
 /// 将用户输入路径解析为落在 `worktree_canon` 下的规范绝对路径。

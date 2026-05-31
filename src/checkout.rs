@@ -82,8 +82,8 @@ pub fn checkout(
     let old_paths = read_old_index_paths(&git_abs)?;
     let worktree_paths = collect_worktree_paths(worktree, &git_abs)?;
 
-    let commit = CommitObject::read_loose_commit(&git_abs, &commit_id.to_string());
-    let tree = TreeObject::read_loose_tree(&git_abs, &commit.tree.to_string());
+    let commit = CommitObject::read_loose_commit(&git_abs, &commit_id.to_string())?;
+    let tree = TreeObject::read_loose_tree(&git_abs, &commit.tree.to_string())?;
     let new_root = IndexRootTree::from_tree_object(&git_abs, &tree)?;
     let new_paths = new_root.blob_paths();
 

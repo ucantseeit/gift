@@ -246,7 +246,9 @@ impl CommitObject {
     }
 
     /// 读取 `.git/objects` 下的 loose commit（与 `read_loose_tree` 同层）
-    pub fn read_loose_commit(git_abs: &Path, hex_oid: &str) -> CommitObject {
+    pub fn read_loose_commit(
+        git_abs: &Path, hex_oid: &str
+    ) -> Result<CommitObject> {
         let is_sha1 = hex_oid.len() == 40;
         let loose = git_paths::loose_object_path(git_abs, hex_oid);
         assert!(
@@ -255,8 +257,9 @@ impl CommitObject {
             loose.display()
         );
 
-        let mut br = Object::open_loose_object_bufreader(git_abs, &hex_oid)
-            .expect(&format!("cannot open object with oid {}", hex_oid));
+        let mut br = 
+            Object::open_loose_object_bufreader(git_abs, &hex_oid)
+                .with_context(|| "read loose commit ")?;
 
         let kind = Object::read_object_type(&mut br).expect("read type");
         assert_eq!(kind, "commit", "cat-file -t should be commit");
@@ -277,7 +280,7 @@ impl CommitObject {
             ObjectSha::SHA256(oid_bytes)
         };
 
-        CommitObject::read_commit(object_name, &mut br, is_sha1).expect("read_commit")
+        Ok(CommitObject::read_commit(object_name, &mut br, is_sha1)?)
     }
 }
 
@@ -481,7 +484,10 @@ impl TreeObject {
         content
     }
 
-    pub fn read_loose_tree(git_abs: &Path, oid: &str) -> TreeObject {
+    pub fn read_loose_tree(
+        git_abs: &Path, 
+        oid: &str
+    ) -> Result<TreeObject> {
         let loose = git_paths::loose_object_path(git_abs, oid);
         assert!(
             loose.is_file(),
@@ -503,7 +509,7 @@ impl TreeObject {
             .expect("oid len");
         let object_name = ObjectSha::SHA1(oid_bytes);
 
-        TreeObject::read_tree(object_name, &mut br, true).expect("read_tree")
+        Ok(TreeObject::read_tree(object_name, &mut br, true)?)
     }
 }
 

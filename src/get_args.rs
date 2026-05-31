@@ -1,7 +1,7 @@
 //！ 获取命令行参数,接入对应函数
 use crate::{init, 
     object::{hash_object, write_hash_object}, 
-    staging::stage_paths,
+    staging::{stage_paths, resolve_stage_inputs},
     git_paths::discover_repo_from_cwd,
     commit::commit,
     commit_identity::identities_from_git_env,
@@ -75,14 +75,13 @@ pub fn get_args_and_go() -> Result<(), anyhow::Error>  {
 
         //这里暂时先假设.gift文件夹就在worktree底下，不分离
         //但是进程文件不一定就直接在worktree底下
-        GiftCommand::Add {inputs} => { 
-            //应该传入.gift和worktree相对于当前目录的路径，绝对路径也可以
+        GiftCommand::Add {inputs} => {
             let abs_path = discover_repo_from_cwd()?;
             let inputs_path: Vec<PathBuf> = inputs.into_iter()
                 .map(PathBuf::from)
                 .collect();
-            //让递归项先为true,这样文件和文件夹都可以正确处理
-            stage_paths(&abs_path.git_abs, &abs_path.worktree, &inputs_path, true)?;
+            let resolved = resolve_stage_inputs(&inputs_path, &abs_path.worktree, &abs_path.git_abs)?;
+            stage_paths(&abs_path.git_abs, &abs_path.worktree, &resolved, true)?;
             Ok(())
         },
 
