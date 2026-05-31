@@ -148,11 +148,7 @@ fn scan_worktree(
 
 /// 根据路径在 IndexFile 中查找对应的 Entry
 fn get_entry<'a>(index: &'a IndexFile, path: &[u8]) -> Option<&'a Entry> {
-    // entries 是按 path 排序的，可以使用二分查找
-    match index.entries().binary_search_by(|e| e.path().cmp(path)) {
-        Ok(idx) => Some(&index.entries()[idx]),
-        Err(_) => None,
-    }
+    index.get_entry(path)
 }
 
 /// 比较工作区文件的 stat 信息和 index 中缓存的 stat 信息是否相同

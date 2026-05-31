@@ -51,7 +51,7 @@ fn stage_paths_roundtrip_index() {
     assert_eq!(idx.version(), 2, "index version");
     assert_eq!(idx.entries().len(), 2, "entry count");
 
-    let mut paths: Vec<Vec<u8>> = idx.entries().iter().map(|e| e.path().to_vec()).collect();
+    let mut paths: Vec<Vec<u8>> = idx.entries().map(|e| e.path().to_vec()).collect();
     paths.sort();
     assert_eq!(
         paths,

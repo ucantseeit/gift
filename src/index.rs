@@ -2,6 +2,7 @@ use anyhow::{Context, bail, ensure};
 use hex;
 use log::debug;
 use sha1::{Digest, Sha1};
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -101,34 +102,37 @@ impl Entry {
 #[derive(Debug)]
 pub struct IndexFile {
     version: u32,
-    entries: Vec<Entry>,
+    entries: BTreeMap<Vec<u8>, Entry>,
     // no supply for extensions now
 }
 
 impl IndexFile {
     pub fn new() -> Self {
-        IndexFile { version: 0, entries: Vec::new() }
+        IndexFile { version: 0, entries: BTreeMap::new() }
     }
 
     /// 空 index（仅版本号）；用于尚无 `index` 文件时要写入新的暂存区。
     pub fn empty(version: u32) -> Self {
         Self {
             version,
-            entries: Vec::new(),
+            entries: BTreeMap::new(),
         }
     }
 
     fn insert_entry(&mut self, entry: Entry) {
-        self.entries.push(entry);
-        self.entries.sort_by(|a, b| a.path.cmp(&b.path));
+        self.entries.insert(entry.path.clone(), entry);
     }
 
     pub fn version(&self) -> u32 {
         self.version
     }
 
-    pub fn entries(&self) -> &[Entry] {
-        &self.entries
+    pub fn entries(&self) -> impl Iterator<Item = &Entry> + ExactSizeIterator + '_ {
+        self.entries.values()
+    }
+
+    pub fn get_entry(&self, path: &[u8]) -> Option<&Entry> {
+        self.entries.get(path)
     }
 }
 
@@ -170,7 +174,7 @@ pub fn parse_index_file(index_path: &Path) -> Result<IndexFile, anyhow::Error> {
             i
         );
         let entry = get_entry(&index_content, &mut i)?;
-        result.entries.push(entry);
+        result.entries.insert(entry.path.clone(), entry);
     }
 
     Ok(result)
@@ -184,7 +188,7 @@ pub fn write_index_file(index_path: &Path, index: &IndexFile) -> Result<()> {
     append_u32_be(&mut buf, index.version);
     let n = index.entries.len();
     append_u32_be(&mut buf, n as u32);
-    for e in &index.entries {
+    for e in index.entries.values() {
         buf.extend_from_slice(&encode_entry(e)?);
     }
     let checksum: [u8; 20] = Sha1::digest(&buf).into();
@@ -404,7 +408,7 @@ pub fn add_index(
     let name_length_u =path_bytes.len();
     let name_length: u16 = name_length_u.try_into().unwrap();
 
-    index.entries.retain(|e| e.path != path_bytes);
+    index.entries.remove(&path_bytes);
 
     let entry = Entry {
         ctime_sec,
