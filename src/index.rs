@@ -135,11 +135,11 @@ impl IndexFile {
 
 /// 解析 Git index 文件。在 **`RUST_LOG`** 含 **`debug`**（例如 `RUST_LOG=gift=debug`）且进程已初始化
 /// **`env_logger`**（或其它 `log` 实现）时，会输出每个头部字段及每条 cache entry 各域的调试信息。
-pub fn parse_index_file(index_path: impl AsRef<Path>) -> Result<IndexFile, anyhow::Error> {
+pub fn parse_index_file(index_path: &Path) -> Result<IndexFile, anyhow::Error> {
     let mut result = IndexFile::new();
 
     let index_content = fs::read(&index_path)
-                                        .with_context(|| format!("read {}", index_path.as_ref().display()))?;
+                                        .with_context(|| format!("read {}", index_path.display()))?;
 
     let mut i = 0;
     let header = read_exact(&index_content, &mut i, 4)?;
@@ -179,7 +179,7 @@ pub fn parse_index_file(index_path: impl AsRef<Path>) -> Result<IndexFile, anyho
 
 /// Serializes `index` to `index_path` with trailing SHA1 checksum (Git index layout, no extensions).
 /// Writes to a temporary file in the same directory, then [`rename`]s into place.
-pub fn write_index_file(index_path: impl AsRef<Path>, index: &IndexFile) -> Result<()> {
+pub fn write_index_file(index_path: &Path, index: &IndexFile) -> Result<()> {
     let mut buf = Vec::new();
     buf.extend_from_slice(b"DIRC");
     append_u32_be(&mut buf, index.version);
@@ -357,7 +357,7 @@ fn get_entry(index_content: &[u8], i: &mut usize) -> Result<Entry, anyhow::Error
 }
 
 
-pub fn display_index_file(index_path: impl AsRef<Path>) -> Result<(), anyhow::Error> {
+pub fn display_index_file(index_path: &Path) -> Result<(), anyhow::Error> {
     let index_file = parse_index_file(index_path);
     println!("{:?}", index_file);
     Ok(())
@@ -561,11 +561,6 @@ pub mod index_tree {
             &self.object_name
         }
 
-        pub fn object_file_path(&self, git_dir: impl AsRef<Path>) -> PathBuf {
-            let hash = hex::encode(self.object_name.as_bytes());
-            git_paths::loose_object_path(git_dir.as_ref(), &hash)
-        }
-
         pub fn new(file_mode: FileMode, object_name: ObjectSha) -> Self {
             Self {file_mode, object_name}
         }
@@ -590,7 +585,7 @@ pub mod index_tree {
             insert_blob_into_children_map(tree, parent_dir_iter, blob_file_name, blob)
         }
 
-        pub fn write_tree_return_entry(&self, git_dir: impl AsRef<Path>, is_sha1: bool) -> TreeEntry {
+        pub fn write_tree_return_entry(&self, git_dir: &Path, is_sha1: bool) -> TreeEntry {
             match self {
                 TreeNode::Blob(b) => {
                     TreeEntry{file_mode: b.file_mode, object_name: b.object_name.clone()}
@@ -604,7 +599,7 @@ pub mod index_tree {
                     let content = TreeObject::entries_to_binary(entries, is_sha1);
                     let hash: [u8; 20] = Sha1::digest(&content).try_into().unwrap();
                     let object_name = ObjectSha::SHA1(hash);
-                    write_hash_object(git_dir.as_ref(), &object_name, &content).unwrap();
+                    write_hash_object(git_dir, &object_name, &content).unwrap();
                     TreeEntry { file_mode: FileMode::Directory, object_name }
                 }
             }
@@ -654,7 +649,7 @@ pub mod index_tree {
 
         pub fn write_tree(
             &self, 
-            git_dir: impl AsRef<Path>, 
+            git_dir: &Path, 
             is_sha1: bool) 
         -> Result<ObjectSha>
         {
@@ -662,7 +657,7 @@ pub mod index_tree {
             let content = TreeObject::entries_to_binary(entries, is_sha1);
             let hash: [u8; 20] = Sha1::digest(&content).try_into()?;
             let object_name = ObjectSha::SHA1(hash);
-            write_hash_object(git_dir.as_ref(), &object_name, &content)?;
+            write_hash_object(git_dir, &object_name, &content)?;
             Ok(object_name)
         }
     }
@@ -697,7 +692,7 @@ pub mod index_tree {
 
     fn write_children_return_entries(
         children: &BTreeMap<OsString, TreeNode>, 
-        git_dir: impl AsRef<Path>, 
+        git_dir: &Path, 
         is_sha1: bool) 
     -> BTreeMap<OsString, TreeEntry> 
     {

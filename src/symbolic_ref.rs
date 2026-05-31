@@ -13,9 +13,9 @@ pub struct SymbolicRef {
 /// 从 `sym_file` 读取 `ref: …`，得到 `ref_name`（`git_dir` 与 `write_symbolic_ref` 对齐，供后续校验扩展）
 pub fn read_symbolic_ref(
     worktree: &Path,
-    sym_file: impl AsRef<Path>,
+    sym_file: &Path,
 ) -> Result<SymbolicRef> {
-    let full = worktree.join(sym_file.as_ref());
+    let full = worktree.join(sym_file);
     let content = fs::read_to_string(&full).with_context(|| format!("read {}", full.display()))?;
     let line = content.trim_end_matches(['\r', '\n']).trim_end();
     if line.lines().nth(1).is_some() {
@@ -35,10 +35,10 @@ pub fn read_symbolic_ref(
 /// 将 `ref: <ref_name>\n` 写入 `sym_file`
 pub fn write_symbolic_ref(
     worktree: &Path,
-    sym_file: impl AsRef<Path>,
+    sym_file: &Path,
     sym: &SymbolicRef,
 ) -> Result<()> {
-    let full = worktree.join(sym_file.as_ref());
+    let full = worktree.join(sym_file);
     if let Some(parent) = full.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("mkdir {}", parent.display()))?;

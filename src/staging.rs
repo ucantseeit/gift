@@ -13,8 +13,8 @@ use std::path::{Path, PathBuf};
 /// # 参数
 ///
 /// - **`git_dir`**：Git 目录（内含 `objects/`、`index`），可为 `.git`、`.gift` 等。
-/// - **`work_tree`**：工作区根目录；index 中的路径为其相对路径（经 [`index::index_path_bytes`]）。
-/// - **`inputs`**：用户给出的路径列表；相对路径相对于**进程当前工作目录**解析，再规范化为绝对路径并校验落在 `work_tree` 内。
+/// - **`worktree`**：工作区根目录；index 中的路径为其相对路径（经 [`index::index_path_bytes`]）。
+/// - **`inputs`**：用户给出的路径列表；相对路径相对于**进程当前工作目录**解析，再规范化为绝对路径并校验落在 `worktree` 内。
 /// - **`recursive_dirs`**：为 `true` 时递归展开目录内的文件与符号链接；为 `false` 时若某条路径为目录则返回错误。
 ///
 /// # 说明
@@ -22,8 +22,8 @@ use std::path::{Path, PathBuf};
 /// - 暂未实现 `.gitignore`。
 /// - 暂未实现同步删除工作区文件的操作。
 pub fn stage_paths(
-    git_dir: impl AsRef<Path>,
-    work_tree: impl AsRef<Path>,
+    git_dir: &Path,
+    worktree: &Path,
     inputs: &[PathBuf],
     recursive_dirs: bool,
 ) -> Result<()> {
@@ -31,22 +31,19 @@ pub fn stage_paths(
         bail!("no paths to stage");
     }
 
-    let git_dir = git_dir.as_ref();
-    let work_tree = work_tree.as_ref();
-
     //fs::canonicalize的功能：
     //1.解析符号链接（比如说symlink快捷方式）
-    //2.展开相对路径转换成绝对路径
+    //2.展开相对路径转换成绝对路径(并且会展开../.)
     //3.验证路径存在
-    let work_tree_canon = fs::canonicalize(work_tree)?;
+    let worktree = fs::canonicalize(worktree)?;
     let git_dir_canon = fs::canonicalize(git_dir)?;
-    // 用户可能不在work_tree目录下运行git add操作，所以需要cwd
+    // 用户可能不在worktree目录下运行git add操作，所以需要cwd
     let cwd = std::env::current_dir()?;
 
     // 将inputs转换成绝对路径
     let mut resolved_roots = BTreeSet::<PathBuf>::new();
     for input in inputs {
-        let p = resolve_under_work_tree(input, &cwd, &work_tree_canon)?;
+        let p = resolve_under_worktree(input, &cwd, &worktree)?;
         ensure_not_inside_git_dir(&p, &git_dir_canon)?;
         resolved_roots.insert(p);
     }
@@ -74,7 +71,7 @@ pub fn stage_paths(
         object::write_hash_object(git_dir, &sha, &blob_content)?;
 
         let md = fs::symlink_metadata(leaf)?;
-        let path_bytes = index::index_path_bytes(&work_tree_canon, leaf)?;
+        let path_bytes = index::index_path_bytes(&worktree, leaf)?;
         index::add_index(
             &mut index,
             &md,
@@ -91,11 +88,11 @@ pub fn stage_paths(
     Ok(())
 }
 
-/// 将用户输入路径解析为落在 `work_tree_canon` 下的规范绝对路径。
-fn resolve_under_work_tree(
+/// 将用户输入路径解析为落在 `worktree_canon` 下的规范绝对路径。
+fn resolve_under_worktree(
     input: &Path,
     cwd: &Path,
-    work_tree_canon: &Path,
+    worktree_canon: &Path,
 ) -> Result<PathBuf> {
     let joined = if input.is_absolute() {
         input.to_path_buf()
@@ -106,11 +103,11 @@ fn resolve_under_work_tree(
         fs::canonicalize(&joined).with_context(|| {
             format!("canonicalize {}", joined.display())
         })?;
-    canon.strip_prefix(work_tree_canon).with_context(|| {
+    canon.strip_prefix(worktree_canon).with_context(|| {
         format!(
             "{} is not under work tree {}",
             canon.display(),
-            work_tree_canon.display()
+            worktree_canon.display()
         )
     })?;
     Ok(canon)
@@ -118,8 +115,8 @@ fn resolve_under_work_tree(
 
 /// 确保path不在git_dir以内
 fn ensure_not_inside_git_dir(path: &Path, git_dir_canon: &Path) -> Result<()> {
-    let c = fs::canonicalize(path)?;
-    if c.starts_with(git_dir_canon) {
+    let path = fs::canonicalize(path)?;
+    if path.starts_with(git_dir_canon) {
         bail!(
             "path {} lies inside git directory {}",
             path.display(),

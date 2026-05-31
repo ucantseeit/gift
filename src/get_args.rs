@@ -10,7 +10,7 @@ use crate::{init,
 };
 use anyhow::Ok;
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 #[derive(Subcommand, Debug)]
 
 enum GiftCommand {
@@ -64,17 +64,17 @@ pub fn get_args_and_go() -> Result<(), anyhow::Error>  {
 
         GiftCommand::HashObject {write, file}=> {
             let my_obj_path = PathBuf::from(file);
-            let (obj_hash, obj_content) = hash_object(my_obj_path).unwrap();
+            let (obj_hash, obj_content) = hash_object(&my_obj_path).unwrap();
             println!("{}",obj_hash.to_string());
             if write{
-                let root = ".gift".to_string();
-                write_hash_object(root, &obj_hash, &obj_content)?;
+                let root = Path::new(".gift");
+                write_hash_object(&root, &obj_hash, &obj_content)?;
             }
             Ok(())
         },
 
-        //这里暂时先假设.gift文件夹就在work_tree底下，不分离
-        //但是进程文件不一定就直接在work_tree底下
+        //这里暂时先假设.gift文件夹就在worktree底下，不分离
+        //但是进程文件不一定就直接在worktree底下
         GiftCommand::Add {inputs} => { 
             //应该传入.gift和worktree相对于当前目录的路径，绝对路径也可以
             let abs_path = discover_repo_from_cwd()?;
@@ -82,7 +82,7 @@ pub fn get_args_and_go() -> Result<(), anyhow::Error>  {
                 .map(PathBuf::from)
                 .collect();
             //让递归项先为true,这样文件和文件夹都可以正确处理
-            stage_paths(abs_path.git_dir, abs_path.work_tree, &inputs_path, true)?;
+            stage_paths(&abs_path.git_dir, &abs_path.worktree, &inputs_path, true)?;
             Ok(())
         },
 
@@ -91,11 +91,11 @@ pub fn get_args_and_go() -> Result<(), anyhow::Error>  {
             let (auther_about, committer_about) = identities_from_git_env()?;
             let git_dir_rel = abs_path
                 .git_dir
-                .strip_prefix(&abs_path.work_tree)?
+                .strip_prefix(&abs_path.worktree)?
                 .to_path_buf();
             let sha = commit(
-                abs_path.work_tree.as_path(), 
-                git_dir_rel, 
+                abs_path.worktree.as_path(), 
+                &git_dir_rel, 
                 auther_about, 
                 committer_about, message
             )?;
@@ -111,7 +111,7 @@ pub fn get_args_and_go() -> Result<(), anyhow::Error>  {
         },
         GiftCommand::Checkout { target } =>{
             let abs_path = discover_repo_from_cwd()?;
-            checkout(&abs_path.work_tree, abs_path.git_dir, target)?;
+            checkout(&abs_path.worktree, &abs_path.git_dir, target)?;
             Ok(())
         },
         GiftCommand::Status => {println!("Status"); Ok(())},

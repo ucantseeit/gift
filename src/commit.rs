@@ -29,12 +29,11 @@ use crate::object::{commit_tree, Object, CommitIdentity, CommitObject, ObjectSha
 /// 返回新产生的 commit OID（SHA1）。
 pub fn commit(
     worktree: &Path,
-    git_dir: impl AsRef<Path>,
+    git_dir: &Path,
     author: CommitIdentity,
     committer: CommitIdentity,
     commit_message: String,
 ) -> Result<ObjectSha> {
-    let git_dir = git_dir.as_ref();
     let git_abs = resolve_git_dir(worktree, git_dir);
 
     let index_path = git_abs.join("index");
@@ -77,9 +76,11 @@ pub fn commit(
 fn resolve_parents(worktree: &Path, git_abs: &Path, head: &Head) -> Result<Vec<ObjectSha>> {
     match head {
         Head::TargetCommit(oid) => {
+            let mut reader = 
+                Object::open_loose_object_bufreader(git_abs, &oid.to_string())?;
             Object::ensure_loose_object_kind(
-                git_abs, &oid.to_string(), 
-                "commit", "detached HEAD")?;
+                &mut reader, "commit", 
+                "detached HEAD")?;
             Ok(vec![oid.clone()])
         }
         Head::TargetBranch { branch_ref_path } => {
@@ -108,9 +109,12 @@ fn resolve_parents(worktree: &Path, git_abs: &Path, head: &Head) -> Result<Vec<O
                 .try_into()
                 .map_err(|v: Vec<u8>| anyhow::anyhow!("ref oid length {}", v.len()))?;
             let oid = ObjectSha::SHA1(bytes);
+            let mut reader = 
+                Object::open_loose_object_bufreader(git_abs, &oid.to_string())?;
             Object::ensure_loose_object_kind(
-                git_abs, &oid.to_string(), 
-                "commit", "branch tip")?;
+                &mut reader ,
+                "commit", 
+                "branch tip")?;
             Ok(vec![oid])
         }
     }

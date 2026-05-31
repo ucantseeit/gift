@@ -5,7 +5,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::git_paths::{head_rel_path, worktree_path_to_git_path, git_path_to_worktree_path};
+use crate::git_paths::{head_rel_path, worktree_path_to_git_path};
 use crate::object::ObjectSha;
 use crate::reference::{read_ref, update_ref};
 use crate::symbolic_ref::{read_symbolic_ref, write_symbolic_ref, SymbolicRef};
@@ -19,15 +19,18 @@ pub enum Head {
 
 impl Head {
     /// 从磁盘读取并解析 `HEAD`
-    pub fn read(worktree: &Path, git_dir: impl AsRef<Path>) -> Result<Head> {
-        let head_rel = head_rel_path(git_dir.as_ref());
+    pub fn read(
+        worktree: &Path, 
+        git_dir: &Path
+    ) -> Result<Head> {
+        let head_rel = head_rel_path(git_dir);
         let full = worktree.join(&head_rel);
         let content =
             fs::read_to_string(&full).with_context(|| format!("read HEAD {}", full.display()))?;
         let line = content.trim();
         if line.starts_with("ref:") {
             let sym = read_symbolic_ref(worktree, &head_rel)?;
-            let branch_ref_path = git_path_to_worktree_path(git_dir.as_ref(), &sym.ref_name);
+            let branch_ref_path = git_dir.join(&sym.ref_name);
             Ok(Head::TargetBranch { branch_ref_path })
         } else {
             let line = line.trim_end_matches(['\r', '\n']);
@@ -49,21 +52,27 @@ impl Head {
     }
 
     /// 当前检出的 commit（分支：读 `branch_ref_path`；detached：即 `HEAD` 内 OID）
-    pub fn current_commit(&self, worktree: &Path, git_dir: impl AsRef<Path>) -> Result<ObjectSha> {
+    pub fn current_commit(
+        &self, worktree: &Path, 
+        git_dir: &Path
+    ) -> Result<ObjectSha> {
         match self {
             Head::TargetBranch { branch_ref_path } => {
-                Ok(read_ref(worktree, git_dir.as_ref(), branch_ref_path)?.commit_id)
+                Ok(read_ref(worktree, git_dir, branch_ref_path)?.commit_id)
             }
             Head::TargetCommit(oid) => Ok(oid.clone()),
         }
     }
 
     /// 将 `Head` 写回 `HEAD` 文件
-    pub fn write(&self, worktree: &Path, git_dir: impl AsRef<Path>) -> Result<()> {
-        let head_rel = head_rel_path(git_dir.as_ref());
+    pub fn write(
+        &self, worktree: &Path, 
+        git_dir: &Path
+    ) -> Result<()> {
+        let head_rel = head_rel_path(git_dir);
         match self {
             Head::TargetBranch { branch_ref_path } => {
-                let ref_name = worktree_path_to_git_path(worktree, git_dir.as_ref(), branch_ref_path)?;
+                let ref_name = worktree_path_to_git_path(worktree, git_dir, branch_ref_path)?;
                 write_symbolic_ref(
                     worktree,
                     &head_rel,
@@ -89,12 +98,12 @@ impl Head {
     pub fn record_new_commit(
         &self,
         worktree: &Path,
-        git_dir: impl AsRef<Path>,
+        git_dir: &Path,
         new_oid: &ObjectSha,
     ) -> Result<()> {
         match self {
             Head::TargetBranch { branch_ref_path } => {
-                update_ref(worktree, git_dir.as_ref(), branch_ref_path, new_oid)?;
+                update_ref(worktree, git_dir, branch_ref_path, new_oid)?;
             }
             Head::TargetCommit(_) => {
                 Head::TargetCommit(new_oid.clone()).write(worktree, git_dir)?;

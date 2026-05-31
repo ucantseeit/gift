@@ -19,9 +19,11 @@ pub enum CheckoutTarget {
     Commit(ObjectSha),
     Branch(String),
 }
+
 impl FromStr for CheckoutTarget {
     type Err = String;
 
+    /// 将输入的 &str 转换成checkout的目标
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         if (s.len() == 40 || s.len() == 64) && s.chars().all(|c| c.is_ascii_hexdigit()) {
             let bytes = hex::decode(s).map_err(|e| e.to_string())?;
@@ -44,17 +46,19 @@ impl FromStr for CheckoutTarget {
     }
 }
 
+/// checkout 到指定 commit_id
 pub fn checkout_commit(
     worktree: &Path,
-    git_dir: impl AsRef<Path>,
+    git_dir: &Path,
     commit_id: ObjectSha,
 ) -> Result<()> {
     checkout(worktree, git_dir, CheckoutTarget::Commit(commit_id))
 }
 
+/// checkout 到指定 branch
 pub fn checkout_branch(
     worktree: &Path,
-    git_dir: impl AsRef<Path>,
+    git_dir: &Path,
     branch_name: &str,
 ) -> Result<()> {
     checkout(
@@ -64,12 +68,18 @@ pub fn checkout_branch(
     )
 }
 
-pub fn checkout(worktree: &Path, git_dir: impl AsRef<Path>, target: CheckoutTarget) -> Result<()> {
-    let git_rel = git_dir.as_ref();
-    let git_abs = resolve_git_dir(worktree, git_rel);
+pub fn checkout(
+    worktree: &Path, 
+    git_dir: &Path, 
+    target: CheckoutTarget
+) -> Result<()> {
+    let git_abs = resolve_git_dir(worktree, git_dir);
 
-    let (commit_id, next_head) = resolve_checkout_target(worktree, git_rel, &git_abs, target)?;
-    Object::ensure_loose_object_kind(&git_abs, &commit_id.to_string(), "commit", "checkout")?;
+    let (commit_id, next_head) = resolve_checkout_target(worktree, git_dir, &git_abs, target)?;
+    let git_abs = worktree.join(git_dir);
+    let mut commit_reader = 
+        Object::open_loose_object_bufreader(&git_abs, &commit_id.to_string())?;
+    Object::ensure_loose_object_kind(&mut commit_reader, "commit", "checkout")?;
 
     let old_paths = read_old_index_paths(&git_abs)?;
     let worktree_paths = collect_worktree_paths(worktree, &git_abs)?;
@@ -84,16 +94,18 @@ pub fn checkout(worktree: &Path, git_dir: impl AsRef<Path>, target: CheckoutTarg
 
     let mut new_index = IndexFile::empty(2);
     new_root.to_worktree(worktree, &git_abs, &mut new_index)?;
-    index::write_index_file(git_abs.join("index"), &new_index)
+    index::write_index_file(&git_abs.join("index"), &new_index)
         .with_context(|| format!("write checkout index {}", git_abs.join("index").display()))?;
 
-    next_head.write(worktree, git_rel)?;
+    next_head.write(worktree, git_dir)?;
     Ok(())
 }
 
+/// 得到 checkout 的目标 commit_id
+/// 以及 checkout 后的 Head 文件
 fn resolve_checkout_target(
     worktree: &Path,
-    git_rel: &Path,
+    git_dir: &Path,
     git_abs: &Path,
     target: CheckoutTarget,
 ) -> Result<(ObjectSha, Head)> {
@@ -103,8 +115,9 @@ fn resolve_checkout_target(
             Ok((commit_id, next_head))
         }
         CheckoutTarget::Branch(branch_name) => {
-            let branch_ref_path = branch_ref_path(git_rel, &branch_name);
-            let reference = read_ref(worktree, git_abs, &branch_ref_path)
+            let branch_ref_path = branch_ref_path(git_dir, &branch_name);
+            // debug abs与相对路径
+            let reference = read_ref(worktree, git_dir, &branch_ref_path)
                 .with_context(|| format!("read branch {}", branch_name))?;
             let commit_id = reference.commit_id;
             let next_head = Head::TargetBranch { branch_ref_path };
@@ -225,6 +238,7 @@ fn tree_object_to_children_map(
     return Ok(result_entries);
 }
 
+/// 得到原有 index 文件中记录的, 所有 blob 的路径 (相对于worktree的路径)
 fn read_old_index_paths(git_abs: &Path) -> Result<BTreeSet<PathBuf>> {
     let index_path = git_abs.join("index");
     if !index_path.exists() {
@@ -235,42 +249,48 @@ fn read_old_index_paths(git_abs: &Path) -> Result<BTreeSet<PathBuf>> {
     Ok(IndexRootTree::from_index_file(&index_file)?.blob_paths())
 }
 
+/// 得到现有 worktree 下所有 blob 的路径 (相对worktree的路径)
 fn collect_worktree_paths(worktree: &Path, git_abs: &Path) -> Result<BTreeSet<PathBuf>> {
     let mut out = BTreeSet::new();
-    collect_worktree_paths_at(worktree, git_abs, worktree, &mut out)?;
+    collect_worktree_paths_at(worktree, git_abs, &Path::new(""), &mut out)?;
     Ok(out)
 }
 
+/// 递归收集工作区内的文件和符号链接, 排除 Git 目录
+/// 将相对worktree的路径存入 out
 fn collect_worktree_paths_at(
     worktree: &Path,
     git_abs: &Path,
-    abs: &Path,
+    rel: &Path,
     out: &mut BTreeSet<PathBuf>,
 ) -> Result<()> {
+    let abs = worktree.join(rel);
+
     if abs == git_abs || abs.starts_with(git_abs) {
         return Ok(());
     }
 
     let md =
-        fs::symlink_metadata(abs).with_context(|| format!("symlink_metadata {}", abs.display()))?;
+        fs::symlink_metadata(&abs)
+        .with_context(|| format!("symlink_metadata {}", abs.display()))?;
+
     if md.file_type().is_symlink() || md.is_file() {
-        let rel = abs
-            .strip_prefix(worktree)
-            .with_context(|| format!("{} is not under {}", abs.display(), worktree.display()))?;
-        if !rel.as_os_str().is_empty() {
-            out.insert(rel.to_path_buf());
-        }
+        out.insert(rel.to_path_buf());
         return Ok(());
     }
 
     if md.is_dir() {
-        for entry in fs::read_dir(abs).with_context(|| format!("read_dir {}", abs.display()))? {
+        for entry in fs::read_dir(&abs).with_context(|| format!("read_dir {}", abs.display()))? {
             let entry = entry.with_context(|| format!("read_dir entry {}", abs.display()))?;
             let name = entry.file_name();
             if name == ".git" || name == ".gift" {
                 continue;
             }
-            collect_worktree_paths_at(worktree, git_abs, &entry.path(), out)?;
+            collect_worktree_paths_at(
+                worktree, 
+                git_abs, 
+                &rel.join(&name), 
+                out)?;
         }
         return Ok(());
     }
@@ -278,6 +298,11 @@ fn collect_worktree_paths_at(
     bail!("unsupported file type at {}", abs.display())
 }
 
+/// 参数：
+///     old_paths: 原 index 文件里面记录的 blob paths 
+///     new_paths: 目标 commit 里面需要恢复的 blob paths 
+///     worktree_paths: 现在 worktree 里的 blob paths
+/// 目的: 防止worktree里未被追踪的文件覆盖或被阻挡new_paths
 fn ensure_no_untracked_conflict(
     old_paths: &BTreeSet<PathBuf>,
     new_paths: &BTreeSet<PathBuf>,
@@ -313,6 +338,7 @@ fn ensure_no_untracked_conflict(
     Ok(())
 }
 
+/// 删除在新 checkout 中不再存在的已追踪文件，清理空目录。
 fn delete_removed_tracked_files(
     worktree: &Path,
     old_paths: &BTreeSet<PathBuf>,
@@ -329,6 +355,7 @@ fn delete_removed_tracked_files(
     Ok(())
 }
 
+/// 递归删除空的父目录，直到目录非空或不存在。
 fn prune_empty_parent_dirs(worktree: &Path, rel: &Path) -> Result<()> {
     let mut cur = rel.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
     while !cur.as_os_str().is_empty() {
@@ -348,6 +375,7 @@ fn prune_empty_parent_dirs(worktree: &Path, rel: &Path) -> Result<()> {
     Ok(())
 }
 
+/// 将单个 blob 落地到工作区，处理普通文件和符号链接，设置权限，更新索引
 fn checkout_blob_to_worktree(
     worktree: &Path,
     git_dir: &Path,
@@ -361,7 +389,11 @@ fn checkout_blob_to_worktree(
             .with_context(|| format!("create parent directory {}", parent.display()))?;
     }
 
-    let payload = read_blob_payload(git_dir, leaf.object_name())?;
+    let hex_oid = leaf.object_name().to_string();
+    let git_abs = worktree.join(git_dir);
+    let mut reader = 
+        Object::open_loose_object_bufreader(&git_abs, &hex_oid)?;
+    let payload = BlobObject::read_blob_payload(&mut reader, &hex_oid)?;
     match leaf.file_mode() {
         FileMode::NExecRegularFile | FileMode::ExecRegularFile => {
             if abs.is_dir() && !abs.is_symlink() {
@@ -402,25 +434,6 @@ fn checkout_blob_to_worktree(
     index::add_index(index_file, &md, path_bytes, leaf.object_name().clone())
         .with_context(|| format!("add checkout index entry {}", rel.display()))?;
     Ok(())
-}
-
-fn read_blob_payload(git_dir: &Path, oid: &ObjectSha) -> Result<Vec<u8>> {
-    let mut br = Object::open_loose_object_bufreader(git_dir, &oid.to_string())?;
-    let kind = Object::read_object_type(&mut br)
-        .with_context(|| format!("read object type {}", oid.to_string()))?;
-    ensure!(
-        kind == "blob",
-        "expected blob {}, got {}",
-        oid.to_string(),
-        kind
-    );
-    Object::skip_git_object_size_nul(&mut br)
-        .with_context(|| format!("skip blob header {}", oid.to_string()))?;
-
-    let mut payload = Vec::new();
-    br.read_to_end(&mut payload)
-        .with_context(|| format!("read blob payload {}", oid.to_string()))?;
-    Ok(payload)
 }
 
 fn path_exists_or_is_symlink(path: &Path) -> bool {

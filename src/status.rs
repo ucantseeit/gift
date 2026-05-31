@@ -40,9 +40,8 @@ pub enum ChangeType {
 ///
 /// # 参数
 /// - `worktree`: 工作区根目录
-/// - `git_dir`: Git 目录（如 `.git`）
-pub fn status(worktree: &Path, git_dir: impl AsRef<Path>) -> Result<Status> {
-    let git_dir = git_dir.as_ref();
+/// - `git_dir`: Git 相对worktree的目录（如 `.git`）
+pub fn status(worktree: &Path, git_dir: &Path) -> Result<Status> {
     let git_abs = resolve_git_dir(worktree, git_dir);
     
     let index_path = git_abs.join("index");

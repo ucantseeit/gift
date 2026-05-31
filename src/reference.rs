@@ -17,10 +17,9 @@ pub struct Ref {
 /// 读取 ref；`path` 相对 worktree；`git_dir` 用于定位 `objects/` 做类型校验
 pub fn read_ref(
     worktree: &Path,
-    git_dir: impl AsRef<Path>,
-    path: impl AsRef<Path>,
+    git_dir: &Path,
+    path: &Path,
 ) -> Result<Ref> {
-    let path = path.as_ref();
     let full = worktree.join(path);
     let content = fs::read_to_string(&full).with_context(|| format!("read {}", full.display()))?;
     let line = content.trim();
@@ -48,26 +47,34 @@ pub fn read_ref(
         .try_into()
         .map_err(|v: Vec<u8>| anyhow::anyhow!("oid length {}", v.len()))?;
     let commit_id = ObjectSha::SHA1(bytes);
+    let git_abs = worktree.join(git_dir);
+    let mut reader = 
+        Object::open_loose_object_bufreader(&git_abs, &commit_id.to_string())?;
     Object::ensure_loose_object_kind(
-        git_dir.as_ref(), &commit_id.to_string(), 
-        "commit", "read_ref")?;
+        &mut reader,
+        "commit", 
+        "read_ref")?;
     Ok(Ref { commit_id })
 }
 
 /// 写入 ref
 pub fn update_ref(
     worktree: &Path,
-    git_dir: impl AsRef<Path>,
-    path: impl AsRef<Path>,
+    git_dir: &Path,
+    path: &Path,
     commit_id: &ObjectSha,
 ) -> Result<Ref> {
     let ObjectSha::SHA1(_) = commit_id else {
         bail!("update_ref only supports SHA1 oids");
     };
+    let git_abs = worktree.join(git_dir);
+    let mut reader = 
+        Object::open_loose_object_bufreader(&git_abs, &commit_id.to_string())?;
     Object::ensure_loose_object_kind(
-        git_dir.as_ref(), &commit_id.to_string(), 
-        "commit", "read_ref")?;
-    let full = worktree.join(path.as_ref());
+        &mut reader, 
+        "commit", 
+        "read_ref")?;
+    let full = worktree.join(path);
     if let Some(parent) = full.parent() {
         fs::create_dir_all(parent).with_context(|| format!("mkdir {}", parent.display()))?;
     }
@@ -80,7 +87,10 @@ pub fn update_ref(
     })
 }
 
-pub fn branch(head_path: &Path, branch_name: &str) -> Result<()> {
+pub fn branch(
+    head_path: &Path, 
+    branch_name: &str
+) -> Result<()> {
     fn parse_oid_line(raw: &str, path: &Path) -> Result<String> {
         let line = raw.trim();
         if line.lines().nth(1).is_some() {
@@ -129,7 +139,10 @@ pub fn branch(head_path: &Path, branch_name: &str) -> Result<()> {
     };
 
     // 2) 校验 tip oid 确实是 commit
-    Object::ensure_loose_object_kind(git_dir, &tip_oid, "commit", "branch")?;
+    // let git_abs = worktree.join(git_dir);
+    let mut reader = 
+        Object::open_loose_object_bufreader(git_dir, &tip_oid.to_string())?;
+    Object::ensure_loose_object_kind(&mut reader, "commit", "branch")?;
 
     // 3) 创建新分支 ref，要求不存在（create_new 防覆盖）
     if let Some(parent) = new_ref.parent() {

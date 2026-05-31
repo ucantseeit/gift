@@ -18,7 +18,8 @@ use crate::symbolic_ref::{read_symbolic_ref, write_symbolic_ref, SymbolicRef};
 
 use crate::status;
 
-/// `run_git` 在 worktree 下创建的标准 git 目录（相对 worktree，与 `.gift` 等区分）
+/// `run_git` 在 worktree 下创建的标准 git 目录
+/// 相对 worktree，注意是 .git 而非 .gift
 fn test_git_dir() -> &'static Path {
     Path::new(".git")
 }
@@ -33,6 +34,7 @@ fn test_commit_identity() -> CommitIdentity {
     }
 }
 
+/// 创造测试文件夹，返回测试文件夹的绝对路径 (作为后续 worktree)
 pub fn make_case_dir(case_name: &str) -> PathBuf {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -44,7 +46,8 @@ pub fn make_case_dir(case_name: &str) -> PathBuf {
         .join(format!("{case_name}-{ts}"));
 
     fs::create_dir_all(&root).unwrap();
-    root
+    let cwd = std::env::current_dir().unwrap();
+    cwd.join(root)
 }
 
 fn run_git(dir: &Path, args: &[&str]) {
@@ -225,11 +228,11 @@ fn cmp_write_obj() {
     super::init(&gift_dir).unwrap();
 
     let my_obj_path = case_dir.join("a.txt");
-    let (obj_hash, obj_content) = super::object::hash_object(my_obj_path).unwrap();
+    let (obj_hash, obj_content) = super::object::hash_object(&my_obj_path).unwrap();
     super::object::write_hash_object(&gift_dir, &obj_hash, &obj_content).unwrap();
 
     let my_obj_path = case_dir.join("foo/bar");
-    let (obj_hash, obj_content) = super::object::hash_object(my_obj_path).unwrap();
+    let (obj_hash, obj_content) = super::object::hash_object(&my_obj_path).unwrap();
     super::object::write_hash_object(&gift_dir, &obj_hash, &obj_content).unwrap();
 }
 
@@ -255,20 +258,20 @@ fn parse_index() {
 fn stage_paths_roundtrip_index() {
     // 准备工作环境
     let case_dir = make_case_dir("stage_roundtrip");
-    let work_tree = fs::canonicalize(&case_dir).unwrap();
-    let git_dir = work_tree.join(".gift");
+    let worktree = fs::canonicalize(&case_dir).unwrap();
+    let git_dir = worktree.join(".gift");
     super::init(&git_dir).unwrap();
 
-    fs::write(work_tree.join("top.txt"), b"hello\n").unwrap();
-    fs::create_dir_all(work_tree.join("sub")).unwrap();
-    fs::write(work_tree.join("sub").join("nested.txt"), b"x\n").unwrap();
+    fs::write(worktree.join("top.txt"), b"hello\n").unwrap();
+    fs::create_dir_all(worktree.join("sub")).unwrap();
+    fs::write(worktree.join("sub").join("nested.txt"), b"x\n").unwrap();
 
     // 执行stage操作
-    let inputs = vec![work_tree.join("top.txt"), work_tree.join("sub")];
-    super::staging::stage_paths(&git_dir, &work_tree, &inputs, true).unwrap();
+    let inputs = vec![worktree.join("top.txt"), worktree.join("sub")];
+    super::staging::stage_paths(&git_dir, &worktree, &inputs, true).unwrap();
 
     // 拿到并检验index_file
-    let idx = index::parse_index_file(git_dir.join("index")).unwrap();
+    let idx = index::parse_index_file(&git_dir.join("index")).unwrap();
     assert_eq!(idx.version(), 2, "index version");
     assert_eq!(idx.entries().len(), 2, "entry count");
 
@@ -282,7 +285,7 @@ fn stage_paths_roundtrip_index() {
 
     for e in idx.entries() {
         let rel = std::str::from_utf8(e.path()).expect("entry path utf-8");
-        let disk = work_tree.join(rel);
+        let disk = worktree.join(rel);
         let (sha, _) = super::object::hash_object(&disk).unwrap();
         assert_eq!(
             hex::encode(sha.as_bytes()),
@@ -407,7 +410,7 @@ fn from_index_file_matches_parsed_index_entries() {
     run_git(&case_dir, &["init"]);
     run_git(&case_dir, &["add", "."]);
 
-    let idx = index::parse_index_file(case_dir.join(".git/index")).unwrap();
+    let idx = index::parse_index_file(&case_dir.join(".git/index")).unwrap();
     let mut expected: BTreeMap<PathBuf, (FileMode, ObjectSha)> = BTreeMap::new();
     for e in idx.entries() {
         let path = e.decode_entry_path();
@@ -460,7 +463,7 @@ fn from_index_file_write_tree_matches_git_write_tree() {
     run_git(&case_dir, &["init"]);
     run_git(&case_dir, &["add", "."]);
 
-    let idx = index::parse_index_file(git_dir.join("index")).unwrap();
+    let idx = index::parse_index_file(&git_dir.join("index")).unwrap();
     let root = IndexRootTree::from_index_file(&idx).expect("from_index_file");
     let gift_root_oid = root.write_tree(&git_dir, true).expect("write_tree");
 
@@ -718,7 +721,7 @@ fn update_ref_rejects_non_commit_object() {
     let err = update_ref(
         &case_dir,
         test_git_dir(),
-        branch_ref_path(test_git_dir(), "bad"),
+        &branch_ref_path(test_git_dir(), "bad"),
         &tree_sha,
     )
     .unwrap_err();
@@ -787,7 +790,7 @@ fn write_symbolic_ref_matches_git() {
     let sym = SymbolicRef {
         ref_name: "refs/heads/foo".into(),
     };
-    write_symbolic_ref(&case_dir, test_git_dir().join("HEAD"), &sym).expect("write_symbolic_ref");
+    write_symbolic_ref(&case_dir, &test_git_dir().join("HEAD"), &sym).expect("write_symbolic_ref");
 
     let got = git_stdout(&case_dir, &["symbolic-ref", "-q", "HEAD"])
         .trim()
@@ -795,7 +798,8 @@ fn write_symbolic_ref_matches_git() {
     assert_eq!(got, "refs/heads/foo");
 }
 
-/// 分支 symbolic HEAD：首次提交无 parent；第二次提交单 parent 且为首次 OID，`HEAD` 仍为 symbolic。
+/// 分支 symbolic HEAD：首次提交无 parent；
+/// 第二次提交单 parent 且为首次 OID，`HEAD` 仍为 symbolic。
 #[test]
 fn commit_on_branch_first_then_second() {
     let case_dir = make_case_dir("commit_branch_twice");
@@ -927,7 +931,7 @@ fn checkout_commit_detaches_and_restores_worktree_without_symlinks() {
     )
     .expect("commit c2");
 
-    crate::checkout::checkout_commit(&case_dir, test_git_dir(), c1.clone())
+    crate::checkout::checkout_commit(&case_dir, &git_bare, c1.clone())
         .expect("checkout c1 detached");
 
     assert_eq!(fs::read_to_string(case_dir.join("a.txt")).unwrap(), "v1\n");
@@ -976,8 +980,8 @@ fn checkout_branch_restores_tip_and_keeps_symbolic_head() {
     .expect("commit side tip");
     update_ref(
         &case_dir,
-        case_dir.join(".git"),
-        branch_ref_path(test_git_dir(), "side"),
+        Path::new(".git"),
+        &branch_ref_path(&git_bare, "side"),
         &side_tip,
     )
     .expect("create side branch");
@@ -995,7 +999,7 @@ fn checkout_branch_restores_tip_and_keeps_symbolic_head() {
     )
     .expect("commit main tip");
 
-    crate::checkout::checkout_branch(&case_dir, test_git_dir(), "side")
+    crate::checkout::checkout_branch(&case_dir, &git_bare, "side")
         .expect("checkout side branch");
 
     assert_eq!(
