@@ -1,7 +1,7 @@
 //! 根据暂存区（index）创建一次提交并更新 `HEAD` / 分支 tip。
 //!
 //! 流程（与实现计划一致）：
-//! 1. 解析 `git_dir` 下的 index，用 `IndexRootTree::from_index_file` 构建内存树，再 `write_tree` 写入 loose tree 并得到根 tree 的 OID。
+//! 1. 解析 `git_abs` 下的 index，用 `IndexRootTree::from_index_file` 构建内存树，再 `write_tree` 写入 loose tree 并得到根 tree 的 OID。
 //! 2. 读取 `HEAD`：区分 symbolic（分支）与 detached（`HEAD` 内直接为 40 位 hex）。
 //! 3. 父 commit：
 //!    - detached（`TargetCommit`）：父为 `HEAD` 中的 OID（须为 `commit` 类型）。
@@ -21,20 +21,18 @@ use crate::object::{commit_tree, Object, CommitIdentity, CommitObject, ObjectSha
 /// 使用当前 index 创建一次提交：写 tree、写 commit、按 `HEAD` 形态更新引用。
 ///
 /// - `worktree`：工作区根路径（与 `Head::read`、`read_ref` 约定一致）。
-/// - `git_dir`：相对 `worktree` 的 git 目录（如 `.git`、`.gift`）。
+/// - `git_abs`：git仓库绝对路径
 /// - `author` / `committer`：由上层提供（例如 [`crate::commit_identity::identities_from_git_env`] 或从 config 读取后再构造 [`CommitIdentity`]）。
 /// - `commit_message`：提交说明（写入 commit 对象 body；若末尾无换行会补一个 `\n`，与常见 Git 行为一致）。
 ///
 /// 返回新产生的 commit OID（SHA1）。
 pub fn commit(
     worktree: &Path,
-    git_dir: &Path,
+    git_abs: &Path,
     author: CommitIdentity,
     committer: CommitIdentity,
     commit_message: String,
 ) -> Result<ObjectSha> {
-    let git_abs = worktree.join(git_dir);
-
     let index_path = git_abs.join("index");
     let index_file = parse_index_file(&index_path)
         .with_context(|| format!("parse index {}", index_path.display()))?;
@@ -44,8 +42,8 @@ pub fn commit(
         .write_tree(&git_abs, true)
         .context("write_tree from index")?;
 
-    let head = Head::read(worktree, git_dir).context("read HEAD")?;
-    let parents = resolve_parents(worktree, &git_abs, &head)?;
+    let head = Head::read(git_abs).context("read HEAD")?;
+    let parents = resolve_parents(&git_abs, &head)?;
 
     let mut message = commit_message.into_bytes();
     if !message.ends_with(b"\n") {
@@ -63,7 +61,7 @@ pub fn commit(
 
     let new_oid = commit_tree(&git_abs, &commit_obj).context("write commit object")?;
     head
-        .record_new_commit(worktree, git_dir, &new_oid)
+        .record_new_commit(worktree, git_abs, &new_oid)
         .context("update HEAD / branch ref")?;
     Ok(new_oid)
 }
@@ -72,7 +70,10 @@ pub fn commit(
 /// 目前不考虑merge， 故parent只会有一个
 /// 情况1: detached head(即HEAD文件中是一个oid), 那么parent的oid就是head里面包含的oid
 /// 情况2: 非detached head(即HEAD文件中是一个branch ref的路径), 那么parent的oid要从branch ref中取得
-fn resolve_parents(worktree: &Path, git_abs: &Path, head: &Head) -> Result<Vec<ObjectSha>> {
+fn resolve_parents(
+    git_abs: &Path, 
+    head: &Head
+) -> Result<Vec<ObjectSha>> {
     match head {
         Head::TargetCommit(oid) => {
             let mut reader = 
@@ -83,28 +84,29 @@ fn resolve_parents(worktree: &Path, git_abs: &Path, head: &Head) -> Result<Vec<O
             Ok(vec![oid.clone()])
         }
         Head::TargetBranch { branch_ref_path } => {
-            let full = worktree.join(branch_ref_path);
+            let branch_ref_abs = git_abs.join(branch_ref_path);
 
             // git init后, HEAD文件中指向的路径还不存在, 此时commit并没有parent
-            if !full.exists() {
+            if !branch_ref_abs.exists() {
+                println!("{:?}", branch_ref_abs);
                 return Ok(Vec::new());
             }
-            let content = fs::read_to_string(&full)
-                .with_context(|| format!("read branch ref {}", full.display()))?;
+            let content = fs::read_to_string(&branch_ref_abs)
+                .with_context(|| format!("read branch ref {}", branch_ref_abs.display()))?;
             let line = content.trim();
 
             if line.is_empty() {
-                bail!("branch ref file is empty: {}", full.display());
+                bail!("branch ref file is empty: {}", branch_ref_abs.display());
             }
             if line.lines().nth(1).is_some() {
-                bail!("branch ref must be a single line: {}", full.display());
+                bail!("branch ref must be a single line: {}", branch_ref_abs.display());
             }
             if line.len() != 40 || !line.chars().all(|c| c.is_ascii_hexdigit()) {
-                bail!("branch ref must be 40 hex chars: {}", full.display());
+                bail!("branch ref must be 40 hex chars: {}", branch_ref_abs.display());
             }
 
             let bytes: [u8; 20] = hex::decode(line)
-                .with_context(|| format!("decode ref {}", full.display()))?
+                .with_context(|| format!("decode ref {}", branch_ref_abs.display()))?
                 .try_into()
                 .map_err(|v: Vec<u8>| anyhow::anyhow!("ref oid length {}", v.len()))?;
             let oid = ObjectSha::SHA1(bytes);

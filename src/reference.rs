@@ -1,5 +1,4 @@
 //! 直接 OID 的 ref（`git update-ref`）；路径相对 **worktree 根**。
-//! **`git_dir`**：git 目录相对 worktree（`.git` / `.gift` 等），由上层传入。
 
 use anyhow::{Context, Result, bail};
 use std::{fs};
@@ -14,81 +13,94 @@ pub struct Ref {
     pub commit_id: ObjectSha,
 }
 
-/// 读取 ref；`path` 相对 worktree；`git_dir` 用于定位 `objects/` 做类型校验
+/// 读取 ref
+/// `git_abs` 用于定位 `objects/` 做类型校验
 pub fn read_ref(
-    worktree: &Path,
-    git_dir: &Path,
-    path: &Path,
+    git_abs: &Path,
+    ref_abs: &Path,
 ) -> Result<Ref> {
-    let full = worktree.join(path);
-    let content = fs::read_to_string(&full).with_context(|| format!("read {}", full.display()))?;
+    assert!(ref_abs.is_absolute() && git_abs.is_absolute());
+
+    let content = fs::read_to_string(&ref_abs)
+        .with_context(|| format!("read {}", ref_abs.display()))?;
+    
+    // 检验并提取 content 里包含的 commit_id
     let line = content.trim();
     if line.starts_with("ref:") {
         bail!(
             "expected direct ref (hex oid) at {}, found symbolic ref",
-            full.display()
+            ref_abs.display()
         );
     }
     if line.lines().nth(1).is_some() {
-        bail!("ref file must be a single line: {}", full.display());
+        bail!("ref file must be a single line: {}", ref_abs.display());
     }
     if line.len() != 40 {
         bail!(
             "bad SHA1 ref length {} at {}",
             line.len(),
-            full.display()
+            ref_abs.display()
         );
     }
     if !line.chars().all(|c| c.is_ascii_hexdigit()) {
-        bail!("non-hex ref content at {}", full.display());
+        bail!("non-hex ref content at {}", ref_abs.display());
     }
     let bytes: [u8; 20] = hex::decode(line)
-        .with_context(|| format!("decode ref at {}", full.display()))?
+        .with_context(|| format!("decode ref at {}", ref_abs.display()))?
         .try_into()
         .map_err(|v: Vec<u8>| anyhow::anyhow!("oid length {}", v.len()))?;
+
     let commit_id = ObjectSha::SHA1(bytes);
-    let git_abs = worktree.join(git_dir);
     let mut reader = 
         Object::open_loose_object_bufreader(&git_abs, &commit_id.to_string())?;
     Object::ensure_loose_object_kind(
         &mut reader,
         "commit", 
         "read_ref")?;
+
     Ok(Ref { commit_id })
 }
 
-/// 写入 ref
-pub fn update_ref(
-    worktree: &Path,
-    git_dir: &Path,
-    path: &Path,
+/// 把 commit_id 写入指定的 ref 文件中
+/// ref_rel 是相对于 git_abs 的路径
+/// git_abs 用于检验 commit_id 是否有对应的object
+pub fn write_ref(
+    git_abs: &Path,
+    ref_abs: &Path,
     commit_id: &ObjectSha,
 ) -> Result<Ref> {
-    let ObjectSha::SHA1(_) = commit_id else {
-        bail!("update_ref only supports SHA1 oids");
-    };
-    let git_abs = worktree.join(git_dir);
+    assert!(git_abs.is_absolute() && ref_abs.is_absolute());
+    
+    // 检验 commit_id 是否有对应的object
     let mut reader = 
         Object::open_loose_object_bufreader(&git_abs, &commit_id.to_string())?;
     Object::ensure_loose_object_kind(
         &mut reader, 
         "commit", 
-        "read_ref")?;
-    let full = worktree.join(path);
-    if let Some(parent) = full.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("mkdir {}", parent.display()))?;
+        "update_ref")?;
+
+    // 创建 ref_rel的祖先目录
+    if let Some(parent) = ref_abs.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("mkdir {}", parent.display()))?;
     }
+
+    // 创建 ref_abs这个文件
     let mut f =
-        fs::File::create(&full).with_context(|| format!("create ref {}", full.display()))?;
+        fs::File::create(&ref_abs)
+        .with_context(|| format!("create ref {}", ref_abs.display()))?;
+
+    // 写入 ref 内容 (commit_id)
     let hex = hex::encode(commit_id.as_bytes());
-    write!(f, "{hex}\n").with_context(|| format!("write {}", full.display()))?;
+    write!(f, "{hex}\n").with_context(|| format!("write {}", ref_abs.display()))?;
     Ok(Ref {
         commit_id: commit_id.clone(),
     })
 }
 
 pub fn branch(
-    head_path: &Path, 
+    git_abs: &Path,
+    head_abs: &Path, 
     branch_name: &str
 ) -> Result<()> {
     fn parse_oid_line(raw: &str, path: &Path) -> Result<String> {
@@ -107,26 +119,22 @@ pub fn branch(
         bail!("branch name is empty");
     }
 
-    let git_dir = head_path
-        .parent()
-        .context("HEAD path has no parent directory")?;
-    let new_ref = git_dir.join("refs").join("heads").join(name);
-
-    if new_ref.exists() {
+    let new_ref_abs = git_abs.join("refs").join("heads").join(name);
+    if new_ref_abs.exists() {
         bail!("branch already exists: {}", name);
     }
 
     // 1) 读 HEAD：可能是 symbolic（ref: ...）也可能是 detached（40hex）
-    let head_raw = fs::read_to_string(head_path)
-        .with_context(|| format!("read HEAD {}", head_path.display()))?;
+    let head_raw = fs::read_to_string(head_abs)
+        .with_context(|| format!("read HEAD {}", head_abs.display()))?;
     let head_line = head_raw.trim();
 
     let tip_oid = if let Some(target) = head_line.strip_prefix("ref:") {
         let target = target.trim();
         if target.is_empty() {
-            bail!("empty HEAD symbolic target: {}", head_path.display());
+            bail!("empty HEAD symbolic target: {}", head_abs.display());
         }
-        let target_ref = git_dir.join(target);
+        let target_ref = git_abs.join(target);
         let raw = fs::read_to_string(&target_ref).with_context(|| {
             format!(
                 "read target ref {} (unborn HEAD?)",
@@ -135,25 +143,24 @@ pub fn branch(
         })?;
         parse_oid_line(&raw, &target_ref)?
     } else {
-        parse_oid_line(head_line, head_path)?
+        parse_oid_line(head_line, head_abs)?
     };
 
     // 2) 校验 tip oid 确实是 commit
-    // let git_abs = worktree.join(git_dir);
     let mut reader = 
-        Object::open_loose_object_bufreader(git_dir, &tip_oid.to_string())?;
+        Object::open_loose_object_bufreader(git_abs, &tip_oid.to_string())?;
     Object::ensure_loose_object_kind(&mut reader, "commit", "branch")?;
 
     // 3) 创建新分支 ref，要求不存在（create_new 防覆盖）
-    if let Some(parent) = new_ref.parent() {
+    if let Some(parent) = new_ref_abs.parent() {
         fs::create_dir_all(parent).with_context(|| format!("mkdir {}", parent.display()))?;
     }
     let mut f = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(&new_ref)
-        .with_context(|| format!("create branch ref {}", new_ref.display()))?;
-    write!(f, "{tip_oid}\n").with_context(|| format!("write {}", new_ref.display()))?;
+        .open(&new_ref_abs)
+        .with_context(|| format!("create branch ref {}", new_ref_abs.display()))?;
+    write!(f, "{tip_oid}\n").with_context(|| format!("write {}", new_ref_abs.display()))?;
 
     Ok(())
 }

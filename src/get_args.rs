@@ -82,20 +82,16 @@ pub fn get_args_and_go() -> Result<(), anyhow::Error>  {
                 .map(PathBuf::from)
                 .collect();
             //让递归项先为true,这样文件和文件夹都可以正确处理
-            stage_paths(&abs_path.git_dir, &abs_path.worktree, &inputs_path, true)?;
+            stage_paths(&abs_path.git_abs, &abs_path.worktree, &inputs_path, true)?;
             Ok(())
         },
 
         GiftCommand::Commit {message}=> {
             let abs_path = discover_repo_from_cwd()?;
             let (auther_about, committer_about) = identities_from_git_env()?;
-            let git_dir_rel = abs_path
-                .git_dir
-                .strip_prefix(&abs_path.worktree)?
-                .to_path_buf();
             let sha = commit(
                 abs_path.worktree.as_path(), 
-                &git_dir_rel, 
+                &abs_path.git_abs, 
                 auther_about, 
                 committer_about, message
             )?;
@@ -105,13 +101,13 @@ pub fn get_args_and_go() -> Result<(), anyhow::Error>  {
 
         GiftCommand::Branch {name}=> {
             let abs_path = discover_repo_from_cwd()?;
-            let head_path = abs_path.git_dir.join("HEAD");
-            branch(head_path.as_path(), &name)?;
+            let head_path = abs_path.git_abs.join("HEAD");
+            branch(&abs_path.git_abs, head_path.as_path(), &name)?;
             Ok(())
         },
         GiftCommand::Checkout { target } =>{
             let abs_path = discover_repo_from_cwd()?;
-            checkout(&abs_path.worktree, &abs_path.git_dir, target)?;
+            checkout(&abs_path.worktree, &abs_path.git_abs, target)?;
             Ok(())
         },
         GiftCommand::Status => {println!("Status"); Ok(())},

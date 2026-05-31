@@ -289,11 +289,14 @@ impl CommitObject {
 }
 
 /// `to_binary` 后算 SHA1、写入 objects 目录，返回新对象的 `ObjectSha`
-pub fn commit_tree(git_dir: &Path, commit: &CommitObject) -> Result<ObjectSha> {
+pub fn commit_tree(
+    git_abs: &Path, 
+    commit: &CommitObject
+) -> Result<ObjectSha> {
     let bytes = commit.to_binary();
     let hash: [u8; 20] = Sha1::digest(&bytes).try_into().unwrap();
     let oid = ObjectSha::SHA1(hash);
-    write_hash_object(git_dir, &oid, &bytes)?;
+    write_hash_object(git_abs, &oid, &bytes)?;
     Ok(oid)
 }
 

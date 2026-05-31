@@ -6,7 +6,7 @@ use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use crate::git_paths::{branch_ref_path};
+use crate::git_paths::{get_branch_ref_path};
 use crate::head::Head;
 use crate::index::index_tree::{BlobLeaf, IndexRootTree, TreeNode};
 use crate::index::{self, IndexFile};
@@ -48,33 +48,32 @@ impl FromStr for CheckoutTarget {
 /// checkout 到指定 commit_id
 pub fn checkout_commit(
     worktree: &Path,
-    git_dir: &Path,
+    git_abs: &Path,
     commit_id: ObjectSha,
 ) -> Result<()> {
-    checkout(worktree, git_dir, CheckoutTarget::Commit(commit_id))
+    checkout(worktree, git_abs, CheckoutTarget::Commit(commit_id))
 }
 
 /// checkout 到指定 branch
 pub fn checkout_branch(
     worktree: &Path,
-    git_dir: &Path,
+    git_abs: &Path,
     branch_name: &str,
 ) -> Result<()> {
     checkout(
         worktree,
-        git_dir,
+        git_abs,
         CheckoutTarget::Branch(branch_name.to_string()),
     )
 }
 
 pub fn checkout(
     worktree: &Path, 
-    git_dir: &Path, 
+    git_abs: &Path, 
     target: CheckoutTarget
 ) -> Result<()> {
-    let (commit_id, next_head) = resolve_checkout_target(worktree, git_dir, target)?;
+    let (commit_id, next_head) = resolve_checkout_target(git_abs, target)?;
 
-    let git_abs = worktree.join(git_dir);
     let mut commit_reader = 
         Object::open_loose_object_bufreader(&git_abs, &commit_id.to_string())?;
     Object::ensure_loose_object_kind(&mut commit_reader, "commit", "checkout")?;
@@ -95,15 +94,14 @@ pub fn checkout(
     index::write_index_file(&git_abs.join("index"), &new_index)
         .with_context(|| format!("write checkout index {}", git_abs.join("index").display()))?;
 
-    next_head.write(worktree, git_dir)?;
+    next_head.write(worktree, git_abs)?;
     Ok(())
 }
 
 /// 得到 checkout 的目标 commit_id
 /// 以及 checkout 后的 Head 文件
 fn resolve_checkout_target(
-    worktree: &Path,
-    git_dir: &Path,
+    git_abs: &Path,
     target: CheckoutTarget,
 ) -> Result<(ObjectSha, Head)> {
     match target {
@@ -112,9 +110,9 @@ fn resolve_checkout_target(
             Ok((commit_id, next_head))
         }
         CheckoutTarget::Branch(branch_name) => {
-            let branch_ref_path = branch_ref_path(git_dir, &branch_name);
-            // debug abs与相对路径
-            let reference = read_ref(worktree, git_dir, &branch_ref_path)
+            let branch_ref_path = get_branch_ref_path(&branch_name);
+            let branch_ref_abs = git_abs.join(&branch_ref_path);
+            let reference = read_ref(git_abs, &branch_ref_abs)
                 .with_context(|| format!("read branch {}", branch_name))?;
             let commit_id = reference.commit_id;
             let next_head = Head::TargetBranch { branch_ref_path };
@@ -124,8 +122,8 @@ fn resolve_checkout_target(
 }
 
 impl TreeNode {
-    pub fn from_tree_object(git_dir: &Path, tree: &TreeObject) -> Result<Self> {
-        let children_map = tree_object_to_children_map(git_dir, tree)?;
+    pub fn from_tree_object(git_abs: &Path, tree: &TreeObject) -> Result<Self> {
+        let children_map = tree_object_to_children_map(git_abs, tree)?;
         Ok(TreeNode::Tree(children_map))
     }
 
@@ -147,7 +145,7 @@ impl TreeNode {
     fn checkout_to_worktree(
         &self,
         worktree: &Path,
-        git_dir: &Path,
+        git_abs: &Path,
         rel: &Path,
         index_file: &mut IndexFile,
     ) -> Result<()> {
@@ -159,11 +157,11 @@ impl TreeNode {
                 for (name, child) in children {
                     let mut child_rel = rel.to_path_buf();
                     child_rel.push(name);
-                    child.checkout_to_worktree(worktree, git_dir, &child_rel, index_file)?;
+                    child.checkout_to_worktree(worktree, git_abs, &child_rel, index_file)?;
                 }
             }
             TreeNode::Blob(leaf) => {
-                checkout_blob_to_worktree(worktree, git_dir, rel, leaf, index_file)?;
+                checkout_blob_to_worktree(worktree, git_abs, rel, leaf, index_file)?;
             }
         }
         Ok(())
@@ -171,8 +169,9 @@ impl TreeNode {
 }
 
 impl IndexRootTree {
-    pub fn from_tree_object(git_dir: &Path, tree: &TreeObject) -> Result<Self> {
-        let children_map = tree_object_to_children_map(git_dir, tree)?;
+    pub fn from_tree_object(git_abs: &Path, tree: &TreeObject) -> Result<Self> {
+        let children_map = 
+            tree_object_to_children_map(git_abs, tree)?;
         Ok(IndexRootTree {
             children: children_map,
         })
@@ -191,27 +190,27 @@ impl IndexRootTree {
     pub fn to_worktree(
         &self,
         worktree: &Path,
-        git_dir: &Path,
+        git_abs: &Path,
         index_file: &mut IndexFile,
     ) -> Result<()> {
         for (name, child) in &self.children {
             let mut rel = PathBuf::new();
             rel.push(name);
-            child.checkout_to_worktree(worktree, git_dir, &rel, index_file)?;
+            child.checkout_to_worktree(worktree, git_abs, &rel, index_file)?;
         }
         Ok(())
     }
 }
 
 fn tree_object_to_children_map(
-    git_dir: &Path,
+    git_abs: &Path,
     tree: &TreeObject,
 ) -> Result<BTreeMap<OsString, TreeNode>> {
     let mut result_entries: BTreeMap<OsString, TreeNode> = BTreeMap::new();
 
     for (fname, tree_entry) in tree.entries() {
         let oid = &tree_entry.object_name;
-        let mut br = Object::open_loose_object_bufreader(git_dir, &oid.to_string())?;
+        let mut br = Object::open_loose_object_bufreader(git_abs, &oid.to_string())?;
         let obj_type = Object::read_object_type(&mut br)
             .with_context(|| format!("read object type {}", oid.to_string()))?;
         Object::skip_git_object_size_nul(&mut br)
@@ -220,7 +219,7 @@ fn tree_object_to_children_map(
 
         match object {
             Object::Tree(tree) => {
-                result_entries.insert(fname.clone(), TreeNode::from_tree_object(git_dir, &tree)?);
+                result_entries.insert(fname.clone(), TreeNode::from_tree_object(git_abs, &tree)?);
             }
             Object::Blob(_) => {
                 result_entries.insert(
@@ -375,7 +374,7 @@ fn prune_empty_parent_dirs(worktree: &Path, rel: &Path) -> Result<()> {
 /// 将单个 blob 落地到工作区，处理普通文件和符号链接，设置权限，更新索引
 fn checkout_blob_to_worktree(
     worktree: &Path,
-    git_dir: &Path,
+    git_abs: &Path,
     rel: &Path,
     leaf: &BlobLeaf,
     index_file: &mut IndexFile,
@@ -387,7 +386,6 @@ fn checkout_blob_to_worktree(
     }
 
     let hex_oid = leaf.object_name().to_string();
-    let git_abs = worktree.join(git_dir);
     let mut reader = 
         Object::open_loose_object_bufreader(&git_abs, &hex_oid)?;
     let payload = BlobObject::read_blob_payload(&mut reader, &hex_oid)?;

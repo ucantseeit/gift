@@ -584,7 +584,7 @@ pub mod index_tree {
             insert_blob_into_children_map(tree, parent_dir_iter, blob_file_name, blob)
         }
 
-        pub fn write_tree_return_entry(&self, git_dir: &Path, is_sha1: bool) -> TreeEntry {
+        pub fn write_tree_return_entry(&self, git_abs: &Path, is_sha1: bool) -> TreeEntry {
             match self {
                 TreeNode::Blob(b) => {
                     TreeEntry{file_mode: b.file_mode, object_name: b.object_name.clone()}
@@ -592,13 +592,13 @@ pub mod index_tree {
                 TreeNode::Tree(children) => {
                     let mut entries: BTreeMap<OsString, TreeEntry> = BTreeMap::new();
                     for (file_name, child) in children {
-                        let entry = child.write_tree_return_entry(git_dir.as_ref(), is_sha1);
+                        let entry = child.write_tree_return_entry(git_abs.as_ref(), is_sha1);
                         entries.insert(file_name.clone(), entry);
                     };
                     let content = TreeObject::entries_to_binary(entries, is_sha1);
                     let hash: [u8; 20] = Sha1::digest(&content).try_into().unwrap();
                     let object_name = ObjectSha::SHA1(hash);
-                    write_hash_object(git_dir, &object_name, &content).unwrap();
+                    write_hash_object(git_abs, &object_name, &content).unwrap();
                     TreeEntry { file_mode: FileMode::Directory, object_name }
                 }
             }
@@ -648,15 +648,15 @@ pub mod index_tree {
 
         pub fn write_tree(
             &self, 
-            git_dir: &Path, 
+            git_abs: &Path, 
             is_sha1: bool) 
         -> Result<ObjectSha>
         {
-            let entries = write_children_return_entries(&self.children, git_dir.as_ref(), is_sha1);
+            let entries = write_children_return_entries(&self.children, git_abs.as_ref(), is_sha1);
             let content = TreeObject::entries_to_binary(entries, is_sha1);
             let hash: [u8; 20] = Sha1::digest(&content).try_into()?;
             let object_name = ObjectSha::SHA1(hash);
-            write_hash_object(git_dir, &object_name, &content)?;
+            write_hash_object(git_abs, &object_name, &content)?;
             Ok(object_name)
         }
     }
@@ -691,13 +691,13 @@ pub mod index_tree {
 
     fn write_children_return_entries(
         children: &BTreeMap<OsString, TreeNode>, 
-        git_dir: &Path, 
+        git_abs: &Path, 
         is_sha1: bool) 
     -> BTreeMap<OsString, TreeEntry> 
     {
         let mut entries: BTreeMap<OsString, TreeEntry> = BTreeMap::new();
         for (file_name, child) in children {
-            let entry = child.write_tree_return_entry(git_dir.as_ref(), is_sha1);
+            let entry = child.write_tree_return_entry(git_abs.as_ref(), is_sha1);
             entries.insert(file_name.clone(), entry);
         };
         entries

@@ -8,21 +8,21 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// 将若干工作区路径暂存：对每个叶子对象计算 blob、写入 `git_dir/objects`，再更新 `git_dir/index`。
+/// 将若干工作区路径暂存：对每个叶子对象计算 blob、写入 `git_abs/objects`，再更新 `git_abs/index`。
 ///
 /// # 参数
 ///
-/// - **`git_dir`**：Git 目录（内含 `objects/`、`index`），可为 `.git`、`.gift` 等。
+/// - **`git_abs`**：Git 目录（内含 `objects/`、`index`），可为 `.git`、`.gift` 等。
 /// - **`worktree`**：工作区根目录；index 中的路径为其相对路径（经 [`index::index_path_bytes`]）。
 /// - **`inputs`**：用户给出的路径列表；相对路径相对于**进程当前工作目录**解析，再规范化为绝对路径并校验落在 `worktree` 内。
 /// - **`recursive_dirs`**：为 `true` 时递归展开目录内的文件与符号链接；为 `false` 时若某条路径为目录则返回错误。
 ///
 /// # 说明
-/// - 不会遍历进入 `git_dir` 内部；路径规范化后的叶子若落在 `git_dir` 下会报错。
+/// - 不会遍历进入 `git_abs` 内部；路径规范化后的叶子若落在 `git_abs` 下会报错。
 /// - 暂未实现 `.gitignore`。
 /// - 暂未实现同步删除工作区文件的操作。
 pub fn stage_paths(
-    git_dir: &Path,
+    git_abs: &Path,
     worktree: &Path,
     inputs: &[PathBuf],
     recursive_dirs: bool,
@@ -36,7 +36,7 @@ pub fn stage_paths(
     //2.展开相对路径转换成绝对路径(并且会展开../.)
     //3.验证路径存在
     let worktree = fs::canonicalize(worktree)?;
-    let git_dir_canon = fs::canonicalize(git_dir)?;
+    let git_abs = fs::canonicalize(git_abs)?;
     // 用户可能不在worktree目录下运行git add操作，所以需要cwd
     let cwd = std::env::current_dir()?;
 
@@ -44,18 +44,18 @@ pub fn stage_paths(
     let mut resolved_roots = BTreeSet::<PathBuf>::new();
     for input in inputs {
         let p = resolve_under_worktree(input, &cwd, &worktree)?;
-        ensure_not_inside_git_dir(&p, &git_dir_canon)?;
+        ensure_not_inside_git_abs(&p, &git_abs)?;
         resolved_roots.insert(p);
     }
 
     // 收集所有的"叶子文件"
     let mut leaves = BTreeSet::<PathBuf>::new();
     for root in &resolved_roots {
-        collect_leaves(root, &git_dir_canon, recursive_dirs, &mut leaves)?;
+        collect_leaves(root, &git_abs, recursive_dirs, &mut leaves)?;
     }
 
     
-    let index_path = git_dir.join("index");
+    let index_path = git_abs.join("index");
     let mut index = if index_path.exists() {
         index::parse_index_file(&index_path).with_context(|| {
             format!("parse index {}", index_path.display())
@@ -65,10 +65,10 @@ pub fn stage_paths(
     };
 
     for leaf in &leaves {
-        ensure_not_inside_git_dir(leaf, &git_dir_canon)?;
+        ensure_not_inside_git_abs(leaf, &git_abs)?;
 
         let (sha, blob_content) = object::hash_object(leaf)?;
-        object::write_hash_object(git_dir, &sha, &blob_content)?;
+        object::write_hash_object(&git_abs, &sha, &blob_content)?;
 
         let md = fs::symlink_metadata(leaf)?;
         let path_bytes = index::index_path_bytes(&worktree, leaf)?;
@@ -114,14 +114,14 @@ fn resolve_under_worktree(
     Ok(canon)
 }
 
-/// 确保path不在git_dir以内
-fn ensure_not_inside_git_dir(path: &Path, git_dir_canon: &Path) -> Result<()> {
+/// 确保path不在git_abs以内
+fn ensure_not_inside_git_abs(path: &Path, git_abs: &Path) -> Result<()> {
     let path = fs::canonicalize(path)?;
-    if path.starts_with(git_dir_canon) {
+    if path.starts_with(git_abs) {
         bail!(
             "path {} lies inside git directory {}",
             path.display(),
-            git_dir_canon.display()
+            git_abs.display()
         );
     }
     Ok(())
@@ -130,7 +130,7 @@ fn ensure_not_inside_git_dir(path: &Path, git_dir_canon: &Path) -> Result<()> {
 /// 若为文件或符号链接则加入 `out`；若为目录则按需递归。
 fn collect_leaves(
     path: &Path,
-    git_dir_canon: &Path,
+    git_abs: &Path,
     recursive_dir: bool,
     out: &mut BTreeSet<PathBuf>,
 ) -> Result<()> {
@@ -145,11 +145,11 @@ fn collect_leaves(
     if md.is_dir() {
         let dir_canon =
             fs::canonicalize(path).with_context(|| format!("canonicalize {}", path.display()))?;
-        if dir_canon.starts_with(git_dir_canon) {
+        if dir_canon.starts_with(git_abs) {
             bail!(
                 "directory {} is inside git metadata dir {}",
                 path.display(),
-                git_dir_canon.display()
+                git_abs.display()
             );
         }
 
@@ -172,11 +172,11 @@ fn collect_leaves(
             let child_canon = fs::canonicalize(&child_path).with_context(|| {
                 format!("canonicalize {}", child_path.display())
             })?;
-            if child_canon.starts_with(git_dir_canon) {
+            if child_canon.starts_with(git_abs) {
                 continue;
             }
 
-            collect_leaves(&child_path, git_dir_canon, recursive_dir, out)?;
+            collect_leaves(&child_path, git_abs, recursive_dir, out)?;
         }
         return Ok(());
     }

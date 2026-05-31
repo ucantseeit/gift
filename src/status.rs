@@ -41,9 +41,8 @@ pub enum ChangeType {
 ///
 /// # 参数
 /// - `worktree`: 工作区根目录
-/// - `git_dir`: Git 相对worktree的目录（如 `.git`）
-pub fn status(worktree: &Path, git_dir: &Path) -> Result<Status> {
-    let git_abs = worktree.join(git_dir);
+/// - `git_abs`: git仓库绝对目录
+pub fn status(worktree: &Path, git_abs: &Path) -> Result<Status> {
     let index_path = git_abs.join("index");
     
     // 1. 加载 index
@@ -51,7 +50,7 @@ pub fn status(worktree: &Path, git_dir: &Path) -> Result<Status> {
         .with_context(|| format!("parse index {}", index_path.display()))?;
     
     // 2. 加载 HEAD tree
-    let head_tree = load_head_tree(worktree, &git_dir)?;
+    let head_tree = load_head_tree(worktree, &git_abs)?;
     
     // 3. 检测已暂存的改动（index vs HEAD）
     let staged = detect_staged_changes(&index_file, &head_tree);
@@ -214,16 +213,14 @@ impl HeadTree {
 }
 
 /// 加载 HEAD 提交的根 tree
-/// git_dir:.git 文件/目录的相对路径
-pub fn load_head_tree(worktree: &Path, git_dir: &Path) -> Result<Option<HeadTree>> {
+pub fn load_head_tree(worktree: &Path, git_abs: &Path) -> Result<Option<HeadTree>> {
     // 1. 读取 HEAD
-    let head = match Head::read(worktree, git_dir) {
+    let head = match Head::read(git_abs) {
         Ok(h) => h,
         Err(_) => return Ok(None),
     };
-    let git_abs = worktree.join(git_dir);
     // 2. 获取当前 commit 的 OID
-    let commit_oid = match head.current_commit(worktree, git_dir) {
+    let commit_oid = match head.current_commit(git_abs) {
         Ok(oid) => oid,
         Err(_) => return Ok(None),
     };
@@ -239,7 +236,7 @@ pub fn load_head_tree(worktree: &Path, git_dir: &Path) -> Result<Option<HeadTree
     
     // 5. 递归遍历 tree，收集所有文件路径和哈希
     let mut entries = HashMap::new();
-    traverse_tree(worktree, git_dir, &tree_obj, Vec::new(), &mut entries)?;
+    traverse_tree(worktree, git_abs, &tree_obj, Vec::new(), &mut entries)?;
     
     Ok(Some(HeadTree { entries }))
 }
@@ -247,13 +244,11 @@ pub fn load_head_tree(worktree: &Path, git_dir: &Path) -> Result<Option<HeadTree
 /// 递归遍历 tree，收集所有文件的路径和哈希
 fn traverse_tree(
     worktree: &Path,
-    git_dir: &Path,
+    git_abs: &Path,
     tree: &TreeObject,
     current_path: Vec<u8>,
     entries: &mut HashMap<Vec<u8>, ObjectSha>,
-) -> Result<()> {
-    let git_abs = worktree.join(git_dir);
-    
+) -> Result<()> {    
     for (name, tree_entry) in tree.entries() {
         // 构建完整路径
         let mut path = current_path.clone();
@@ -267,7 +262,7 @@ fn traverse_tree(
             // 是目录，递归读取子 tree
             let sub_tree_hex = tree_entry.object_name.to_string();
             let sub_tree = TreeObject::read_loose_tree(&git_abs, &sub_tree_hex);
-            traverse_tree(worktree, git_dir, &sub_tree, path, entries)?;
+            traverse_tree(worktree, git_abs, &sub_tree, path, entries)?;
         } else {
             // 是文件或符号链接，记录路径和哈希
             entries.insert(path, tree_entry.object_name.clone());

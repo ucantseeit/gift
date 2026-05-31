@@ -7,7 +7,7 @@ use crate::index;
 use crate::index::index_tree::IndexRootTree;
 use crate::object::{FileMode, ObjectSha, TreeObject};
 use super::{
-    make_case_dir, run_git, git_stdout, git_ls_tree_map,
+    make_test_repo, make_gift_repo, run_git, git_stdout, git_ls_tree_map,
     mode_word_to_file_mode, collect_blob_leaves_from_root,
 };
 
@@ -17,16 +17,16 @@ use super::{
 /// 验证解析不报错、能处理非 ASCII 路径（no panic）。输出仅通过 --nocapture 可见，无断言。
 #[test]
 fn parse_index() {
-    let case_dir = make_case_dir("parse_index");
+    let repo = make_test_repo("parse_index");
 
-    fs::write(case_dir.join("a.txt"), "hello\n").unwrap();
-    fs::create_dir_all(case_dir.join("foo").join("啊")).unwrap();
-    fs::write(case_dir.join("foo").join("啊").join("bar"), "你好！aa\n").unwrap();
+    fs::write(repo.worktree.join("a.txt"), "hello\n").unwrap();
+    fs::create_dir_all(repo.worktree.join("foo").join("啊")).unwrap();
+    fs::write(repo.worktree.join("foo").join("啊").join("bar"), "你好！aa\n").unwrap();
 
-    run_git(&case_dir, &["init"]);
-    run_git(&case_dir, &["add", "."]);
+    run_git(&repo.worktree, &["init"]);
+    run_git(&repo.worktree, &["add", "."]);
 
-    index::display_index_file(&case_dir.join(".git/index")).unwrap();
+    index::display_index_file(&repo.git_abs.join("index")).unwrap();
 }
 
 /// 流程：gift init → 写文件（顶层 + 子目录）→ gift stage_paths（相当于 git add）
@@ -37,19 +37,17 @@ fn parse_index() {
 /// 全程不调用 git，验证 gift stage → index 写入 → 读回的完整闭环。
 #[test]
 fn stage_paths_roundtrip_index() {
-    let case_dir = make_case_dir("stage_roundtrip");
-    let worktree = fs::canonicalize(&case_dir).unwrap();
-    let git_dir = worktree.join(".gift");
-    crate::init(&git_dir).unwrap();
+    let repo = make_gift_repo("stage_roundtrip");
+    crate::init(&repo.git_abs).unwrap();
 
-    fs::write(worktree.join("top.txt"), b"hello\n").unwrap();
-    fs::create_dir_all(worktree.join("sub")).unwrap();
-    fs::write(worktree.join("sub").join("nested.txt"), b"x\n").unwrap();
+    fs::write(repo.worktree.join("top.txt"), b"hello\n").unwrap();
+    fs::create_dir_all(repo.worktree.join("sub")).unwrap();
+    fs::write(repo.worktree.join("sub").join("nested.txt"), b"x\n").unwrap();
 
-    let inputs = vec![worktree.join("top.txt"), worktree.join("sub")];
-    crate::staging::stage_paths(&git_dir, &worktree, &inputs, true).unwrap();
+    let inputs = vec![repo.worktree.join("top.txt"), repo.worktree.join("sub")];
+    crate::staging::stage_paths(&repo.git_abs, &repo.worktree, &inputs, true).unwrap();
 
-    let idx = index::parse_index_file(&git_dir.join("index")).unwrap();
+    let idx = index::parse_index_file(&repo.git_abs.join("index")).unwrap();
     assert_eq!(idx.version(), 2, "index version");
     assert_eq!(idx.entries().len(), 2, "entry count");
 
@@ -63,7 +61,7 @@ fn stage_paths_roundtrip_index() {
 
     for e in idx.entries() {
         let rel = std::str::from_utf8(e.path()).expect("entry path utf-8");
-        let disk = worktree.join(rel);
+        let disk = repo.worktree.join(rel);
         let (sha, _) = crate::object::hash_object(&disk).unwrap();
         assert_eq!(
             hex::encode(sha.as_bytes()),
@@ -72,7 +70,7 @@ fn stage_paths_roundtrip_index() {
         );
 
         let hex_oid = hex::encode(e.obj_name().as_bytes());
-        let loose = crate::git_paths::loose_object_path(&git_dir, &hex_oid);
+        let loose = crate::git_paths::loose_object_path(&repo.git_abs, &hex_oid);
         assert!(
             loose.is_file(),
             "loose object file should exist: {}",
@@ -92,36 +90,35 @@ fn stage_paths_roundtrip_index() {
 fn cmp_read_tree_matches_git_ls_tree() {
     use std::os::unix::fs::symlink;
 
-    let case_dir = make_case_dir("read_tree");
-    let git_dir = case_dir.join(".git");
+    let repo = make_test_repo("read_tree");
 
     // 准备各种类型的文件
-    fs::write(case_dir.join("a.txt"), "hello\n").unwrap();
-    fs::create_dir_all(case_dir.join("foo").join("啊")).unwrap();
-    fs::write(case_dir.join("foo").join("啊").join("bar"), "你好！aa\n").unwrap();
-    fs::write(case_dir.join("script.sh"), "#!/bin/sh\necho ok\n").unwrap();
-    symlink("a.txt", case_dir.join("link")).expect("symlink link -> a.txt");
+    fs::write(repo.worktree.join("a.txt"), "hello\n").unwrap();
+    fs::create_dir_all(repo.worktree.join("foo").join("啊")).unwrap();
+    fs::write(repo.worktree.join("foo").join("啊").join("bar"), "你好！aa\n").unwrap();
+    fs::write(repo.worktree.join("script.sh"), "#!/bin/sh\necho ok\n").unwrap();
+    symlink("a.txt", repo.worktree.join("link")).expect("symlink link -> a.txt");
 
     let chmod_ok = Command::new("chmod")
         .args(["+x", "script.sh"])
-        .current_dir(&case_dir)
+        .current_dir(&repo.worktree)
         .status()
         .expect("chmod");
     assert!(chmod_ok.success(), "chmod +x script.sh");
 
-    run_git(&case_dir, &["init"]);
-    run_git(&case_dir, &["add", "."]);
+    run_git(&repo.worktree, &["init"]);
+    run_git(&repo.worktree, &["add", "."]);
 
-    let root_hex = git_stdout(&case_dir, &["write-tree"])
+    let root_hex = git_stdout(&repo.worktree, &["write-tree"])
         .lines().next().expect("write-tree line").trim().to_string();
     assert_eq!(root_hex.len(), 40, "root tree oid hex length");
 
-    let cat_t = git_stdout(&case_dir, &["cat-file", "-t", &root_hex]).trim().to_string();
+    let cat_t = git_stdout(&repo.worktree, &["cat-file", "-t", &root_hex]).trim().to_string();
     assert_eq!(cat_t, "tree");
 
     // 根 tree：gift 解析结果与 git ls-tree 逐条对拍
-    let expected_root = git_ls_tree_map(&case_dir, &root_hex);
-    let tree_root = TreeObject::read_loose_tree(&git_dir, &root_hex);
+    let expected_root = git_ls_tree_map(&repo.worktree, &root_hex);
+    let tree_root = TreeObject::read_loose_tree(&repo.git_abs, &root_hex);
 
     assert_eq!(
         hex::encode(tree_root.object_name().as_bytes()),
@@ -148,14 +145,14 @@ fn cmp_read_tree_matches_git_ls_tree() {
 
     // 递归验证子 tree：foo/ → 啊/ → bar
     let (_, _, foo_tree_sha) = expected_root.get("foo").expect("foo tree");
-    let expected_foo = git_ls_tree_map(&case_dir, foo_tree_sha);
-    let tree_foo = TreeObject::read_loose_tree(&git_dir, foo_tree_sha);
+    let expected_foo = git_ls_tree_map(&repo.worktree, foo_tree_sha);
+    let tree_foo = TreeObject::read_loose_tree(&repo.git_abs, foo_tree_sha);
     assert_eq!(tree_foo.entries().len(), expected_foo.len());
     assert_eq!(tree_foo.entries().len(), 1, "foo/ only contains 啊");
 
     let (_, _, ah_tree_sha) = expected_foo.get("啊").expect("啊 tree under foo");
-    let expected_ah = git_ls_tree_map(&case_dir, ah_tree_sha);
-    let tree_ah = TreeObject::read_loose_tree(&git_dir, ah_tree_sha);
+    let expected_ah = git_ls_tree_map(&repo.worktree, ah_tree_sha);
+    let tree_ah = TreeObject::read_loose_tree(&repo.git_abs, ah_tree_sha);
     assert_eq!(tree_ah.entries().len(), 1);
     assert_eq!(tree_ah.entries().len(), expected_ah.len());
 
@@ -173,16 +170,16 @@ fn cmp_read_tree_matches_git_ls_tree() {
 /// 验证 from_index_file 把扁平 index 正确转换为嵌套树结构，无遗漏也无多余叶子。
 #[test]
 fn from_index_file_matches_parsed_index_entries() {
-    let case_dir = make_case_dir("from_index_only");
-    fs::write(case_dir.join("a.txt"), "hello\n").unwrap();
-    fs::create_dir_all(case_dir.join("foo").join("啊")).unwrap();
-    fs::write(case_dir.join("foo").join("啊").join("bar"), "你好！aa\n").unwrap();
+    let repo = make_test_repo("from_index_only");
+    fs::write(repo.worktree.join("a.txt"), "hello\n").unwrap();
+    fs::create_dir_all(repo.worktree.join("foo").join("啊")).unwrap();
+    fs::write(repo.worktree.join("foo").join("啊").join("bar"), "你好！aa\n").unwrap();
 
-    run_git(&case_dir, &["init"]);
-    run_git(&case_dir, &["add", "."]);
+    run_git(&repo.worktree, &["init"]);
+    run_git(&repo.worktree, &["add", "."]);
 
     // expected：直接从 index entries 建映射
-    let idx = index::parse_index_file(&case_dir.join(".git/index")).unwrap();
+    let idx = index::parse_index_file(&repo.git_abs.join("index")).unwrap();
     let mut expected: BTreeMap<PathBuf, (FileMode, ObjectSha)> = BTreeMap::new();
     for e in idx.entries() {
         let path = e.decode_entry_path();
@@ -216,31 +213,30 @@ fn from_index_file_matches_parsed_index_entries() {
 fn from_index_file_write_tree_matches_git_write_tree() {
     use std::os::unix::fs::symlink;
 
-    let case_dir = make_case_dir("index_write_tree");
-    let git_dir = case_dir.join(".git");
+    let repo = make_test_repo("index_write_tree");
 
-    fs::write(case_dir.join("a.txt"), "hello\n").unwrap();
-    fs::create_dir_all(case_dir.join("foo").join("啊")).unwrap();
-    fs::write(case_dir.join("foo").join("啊").join("bar"), "你好！aa\n").unwrap();
-    fs::write(case_dir.join("script.sh"), "#!/bin/sh\necho ok\n").unwrap();
-    symlink("a.txt", case_dir.join("link")).expect("symlink");
+    fs::write(repo.worktree.join("a.txt"), "hello\n").unwrap();
+    fs::create_dir_all(repo.worktree.join("foo").join("啊")).unwrap();
+    fs::write(repo.worktree.join("foo").join("啊").join("bar"), "你好！aa\n").unwrap();
+    fs::write(repo.worktree.join("script.sh"), "#!/bin/sh\necho ok\n").unwrap();
+    symlink("a.txt", repo.worktree.join("link")).expect("symlink");
 
     let chmod_ok = Command::new("chmod")
         .args(["+x", "script.sh"])
-        .current_dir(&case_dir)
+        .current_dir(&repo.worktree)
         .status()
         .expect("chmod");
     assert!(chmod_ok.success());
 
-    run_git(&case_dir, &["init"]);
-    run_git(&case_dir, &["add", "."]);
+    run_git(&repo.worktree, &["init"]);
+    run_git(&repo.worktree, &["add", "."]);
 
     // gift 写 tree，git 写 tree，对比根 OID
-    let idx = index::parse_index_file(&git_dir.join("index")).unwrap();
+    let idx = index::parse_index_file(&repo.git_abs.join("index")).unwrap();
     let root = IndexRootTree::from_index_file(&idx).expect("from_index_file");
-    let gift_root_oid = root.write_tree(&git_dir, true).expect("write_tree");
+    let gift_root_oid = root.write_tree(&repo.git_abs, true).expect("write_tree");
 
-    let want_hex = git_stdout(&case_dir, &["write-tree"])
+    let want_hex = git_stdout(&repo.worktree, &["write-tree"])
         .lines().next().expect("write-tree").trim().to_string();
     assert_eq!(want_hex.len(), 40);
     assert_eq!(
@@ -249,15 +245,15 @@ fn from_index_file_write_tree_matches_git_write_tree() {
         "root tree oid vs git write-tree"
     );
 
-    let loose = crate::git_paths::loose_object_path(&git_dir, &want_hex);
+    let loose = crate::git_paths::loose_object_path(&repo.git_abs, &want_hex);
     assert!(loose.is_file(), "root loose object exists");
 
-    let cat_t = git_stdout(&case_dir, &["cat-file", "-t", &want_hex]).trim().to_string();
+    let cat_t = git_stdout(&repo.worktree, &["cat-file", "-t", &want_hex]).trim().to_string();
     assert_eq!(cat_t, "tree");
 
     // 逐层对拍 tree entries
-    let expected_root = git_ls_tree_map(&case_dir, &want_hex);
-    let tree_root = TreeObject::read_loose_tree(&git_dir, &want_hex);
+    let expected_root = git_ls_tree_map(&repo.worktree, &want_hex);
+    let tree_root = TreeObject::read_loose_tree(&repo.git_abs, &want_hex);
     assert_eq!(tree_root.entries().len(), expected_root.len());
 
     for (name, entry) in tree_root.entries() {
@@ -275,14 +271,14 @@ fn from_index_file_write_tree_matches_git_write_tree() {
     }
 
     let (_, _, foo_tree_sha) = expected_root.get("foo").expect("foo");
-    let expected_foo = git_ls_tree_map(&case_dir, foo_tree_sha);
-    let tree_foo = TreeObject::read_loose_tree(&git_dir, foo_tree_sha);
+    let expected_foo = git_ls_tree_map(&repo.worktree, foo_tree_sha);
+    let tree_foo = TreeObject::read_loose_tree(&repo.git_abs, foo_tree_sha);
     assert_eq!(tree_foo.entries().len(), expected_foo.len());
     assert_eq!(tree_foo.entries().len(), 1);
 
     let (_, _, ah_tree_sha) = expected_foo.get("啊").expect("啊");
-    let expected_ah = git_ls_tree_map(&case_dir, ah_tree_sha);
-    let tree_ah = TreeObject::read_loose_tree(&git_dir, ah_tree_sha);
+    let expected_ah = git_ls_tree_map(&repo.worktree, ah_tree_sha);
+    let tree_ah = TreeObject::read_loose_tree(&repo.git_abs, ah_tree_sha);
     assert_eq!(tree_ah.entries().len(), expected_ah.len());
     let bar_entry = tree_ah.entries().get(OsStr::new("bar")).expect("bar");
     assert_eq!(bar_entry.file_mode, FileMode::NExecRegularFile);

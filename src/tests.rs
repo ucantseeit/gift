@@ -18,9 +18,39 @@ mod commit;
 mod checkout;
 mod status;
 
-/// 所有测试用 `git init` 创建的是真实 `.git` 目录，相对 worktree 传入库函数。
-pub(super) fn test_git_dir() -> &'static Path {
-    Path::new(".git")
+/// 测试用的独立目录，持有 worktree 和 git/gift 仓库目录的绝对路径。
+pub(super) struct TestRepo {
+    /// 工作区根目录（绝对路径）
+    pub worktree: PathBuf,
+    /// git/gift 仓库目录（绝对路径，= worktree/.git 或 worktree/.gift）
+    pub git_abs: PathBuf,
+}
+
+/// 创建独立测试目录，git_abs = worktree/.git（配合 `git init` 使用）
+pub(super) fn make_test_repo(case_name: &str) -> TestRepo {
+    let worktree = make_worktree_dir(case_name);
+    let git_abs = worktree.join(".git");
+    TestRepo { worktree, git_abs }
+}
+
+/// 创建独立测试目录，git_abs = worktree/.gift（配合 `gift init` 使用）
+pub(super) fn make_gift_repo(case_name: &str) -> TestRepo {
+    let worktree = make_worktree_dir(case_name);
+    let git_abs = worktree.join(".gift");
+    TestRepo { worktree, git_abs }
+}
+
+fn make_worktree_dir(case_name: &str) -> PathBuf {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let root = PathBuf::from("target")
+        .join("inspect")
+        .join(format!("{case_name}-{ts}"));
+    fs::create_dir_all(&root).unwrap();
+    let cwd = std::env::current_dir().unwrap();
+    cwd.join(root)
 }
 
 /// 所有 commit 测试共用的固定 author/committer，保证 OID 可重复（不受系统时间、git config 影响）。
@@ -33,22 +63,6 @@ pub(super) fn test_commit_identity() -> CommitIdentity {
     }
 }
 
-/// 在 `target/inspect/<case_name>-<unix_ts>/` 创建独立测试夹具目录，返回其绝对路径作为 worktree。
-/// 每次测试用不同的时间戳后缀，并发运行时不会互相覆盖。
-pub(super) fn make_case_dir(case_name: &str) -> PathBuf {
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-
-    let root = PathBuf::from("target")
-        .join("inspect")
-        .join(format!("{case_name}-{ts}"));
-
-    fs::create_dir_all(&root).unwrap();
-    let cwd = std::env::current_dir().unwrap();
-    cwd.join(root)
-}
 
 /// 在 `dir` 下运行真实 `git` 命令，失败则 panic（断言测试前置条件已满足）。
 pub(super) fn run_git(dir: &Path, args: &[&str]) {
@@ -62,8 +76,8 @@ pub(super) fn run_git(dir: &Path, args: &[&str]) {
 }
 
 /// zlib 解压后的完整 loose object 字节（含 `type len\0` 头）
-pub(super) fn decompress_loose_object(git_dir: &Path, hex_oid: &str) -> Vec<u8> {
-    let loose = crate::git_paths::loose_object_path(git_dir, hex_oid);
+pub(super) fn decompress_loose_object(git_abs: &Path, hex_oid: &str) -> Vec<u8> {
+    let loose = crate::git_paths::loose_object_path(git_abs, hex_oid);
     let f = fs::File::open(&loose).expect("open loose object");
     let mut zlib = ZlibDecoder::new(std::io::BufReader::new(f));
     let mut raw = Vec::new();
