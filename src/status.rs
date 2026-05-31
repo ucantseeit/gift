@@ -8,7 +8,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 use anyhow::{Context, Result};
-use crate::git_paths::resolve_git_dir;
 use crate::index::{parse_index_file,IndexFile,index_path_bytes,Entry};
 use std::os::unix::fs::MetadataExt;
 
@@ -44,7 +43,7 @@ pub enum ChangeType {
 /// - `worktree`: 工作区根目录
 /// - `git_dir`: Git 相对worktree的目录（如 `.git`）
 pub fn status(worktree: &Path, git_dir: &Path) -> Result<Status> {
-    let git_abs = resolve_git_dir(worktree, git_dir);
+    let git_abs = worktree.join(git_dir);
     let index_path = git_abs.join("index");
     
     // 1. 加载 index
@@ -222,7 +221,7 @@ pub fn load_head_tree(worktree: &Path, git_dir: &Path) -> Result<Option<HeadTree
         Ok(h) => h,
         Err(_) => return Ok(None),
     };
-    let git_abs = resolve_git_dir(worktree, git_dir);
+    let git_abs = worktree.join(git_dir);
     // 2. 获取当前 commit 的 OID
     let commit_oid = match head.current_commit(worktree, git_dir) {
         Ok(oid) => oid,
@@ -253,7 +252,7 @@ fn traverse_tree(
     current_path: Vec<u8>,
     entries: &mut HashMap<Vec<u8>, ObjectSha>,
 ) -> Result<()> {
-    let git_abs = resolve_git_dir(worktree, git_dir);
+    let git_abs = worktree.join(git_dir);
     
     for (name, tree_entry) in tree.entries() {
         // 构建完整路径

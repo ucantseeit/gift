@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use std::os::unix::fs::MetadataExt;
-use super::git_paths;
 use super::object::*;
 
 

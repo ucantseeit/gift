@@ -1,13 +1,12 @@
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{bail, Context, Result};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs;
-use std::io::Read;
 use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use crate::git_paths::{branch_ref_path, resolve_git_dir};
+use crate::git_paths::{branch_ref_path};
 use crate::head::Head;
 use crate::index::index_tree::{BlobLeaf, IndexRootTree, TreeNode};
 use crate::index::{self, IndexFile};

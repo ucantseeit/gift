@@ -99,6 +99,7 @@ fn resolve_under_worktree(
     } else {
         cwd.join(input)
     };
+    
     let canon =
         fs::canonicalize(&joined).with_context(|| {
             format!("canonicalize {}", joined.display())

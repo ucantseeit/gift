@@ -13,7 +13,6 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use crate::git_paths::resolve_git_dir;
 use crate::head::Head;
 use crate::index::index_tree::IndexRootTree;
 use crate::index::parse_index_file;
@@ -34,7 +33,7 @@ pub fn commit(
     committer: CommitIdentity,
     commit_message: String,
 ) -> Result<ObjectSha> {
-    let git_abs = resolve_git_dir(worktree, git_dir);
+    let git_abs = worktree.join(git_dir);
 
     let index_path = git_abs.join("index");
     let index_file = parse_index_file(&index_path)

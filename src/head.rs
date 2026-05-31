@@ -5,7 +5,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::git_paths::{head_rel_path, worktree_path_to_git_path};
+use crate::git_paths::{worktree_path_to_git_path};
 use crate::object::ObjectSha;
 use crate::reference::{read_ref, update_ref};
 use crate::symbolic_ref::{read_symbolic_ref, write_symbolic_ref, SymbolicRef};
@@ -23,7 +23,7 @@ impl Head {
         worktree: &Path, 
         git_dir: &Path
     ) -> Result<Head> {
-        let head_rel = head_rel_path(git_dir);
+        let head_rel = git_dir.join("HEAD");
         let full = worktree.join(&head_rel);
         let content =
             fs::read_to_string(&full).with_context(|| format!("read HEAD {}", full.display()))?;
@@ -69,7 +69,7 @@ impl Head {
         &self, worktree: &Path, 
         git_dir: &Path
     ) -> Result<()> {
-        let head_rel = head_rel_path(git_dir);
+        let head_rel = git_dir.join("HEAD");
         match self {
             Head::TargetBranch { branch_ref_path } => {
                 let ref_name = worktree_path_to_git_path(worktree, git_dir, branch_ref_path)?;

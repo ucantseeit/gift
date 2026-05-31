@@ -4,15 +4,6 @@
 use anyhow::{Context, Ok, Result, bail};
 use std::{fs, path::{Path, PathBuf}};
 
-
-/// `worktree.join(git_dir)`，即 git 目录的绝对路径
-pub fn resolve_git_dir(
-    worktree: &Path, 
-    git_dir: &Path
-) -> PathBuf {
-    worktree.join(git_dir)
-}
-
 /// 将相对 worktree 的路径转为相对 git_dir 的路径（如 `refs/heads/main`）
 pub fn worktree_path_to_git_path(
     worktree: &Path,
@@ -20,7 +11,7 @@ pub fn worktree_path_to_git_path(
     path: &Path,
 ) -> Result<String> {
     let abs = worktree.join(path);
-    let gd = resolve_git_dir(worktree, git_dir);
+    let gd = worktree.join(git_dir);
     let rel = abs.strip_prefix(&gd).with_context(|| {
         format!(
             "git path {} not under git dir {}",
@@ -45,11 +36,6 @@ pub fn branch_ref_path(
         .join("refs")
         .join("heads")
         .join(branch_name)
-}
-
-/// `git_dir/HEAD`（相对 worktree）
-pub fn head_rel_path(git_dir: &Path) -> PathBuf {
-    git_dir.join("HEAD")
 }
 
 /// loose 对象文件路径：`…/objects/ab/cdef…`（`hex_oid` 为完整 hex，不含换行）
