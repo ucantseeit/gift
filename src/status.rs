@@ -6,13 +6,15 @@
 //! - Untracked files（worktree 中存在但 index 中没有）
 use std::fs;
 use std::path::{Path, PathBuf};
-
+use std::collections::HashMap;
 use anyhow::{Context, Result};
 use crate::git_paths::resolve_git_dir;
 use crate::index::{parse_index_file,IndexFile,index_path_bytes,Entry};
 use std::os::unix::fs::MetadataExt;
-// use crate::head::Head;
 
+use crate::head::Head;
+
+use crate::object::{CommitObject, TreeObject, ObjectSha, FileMode};
 #[derive(Debug, Default)]
 pub struct Status {
     /// 已暂存的改动（index vs HEAD）
@@ -43,19 +45,17 @@ pub enum ChangeType {
 /// - `git_dir`: Git 相对worktree的目录（如 `.git`）
 pub fn status(worktree: &Path, git_dir: &Path) -> Result<Status> {
     let git_abs = resolve_git_dir(worktree, git_dir);
-    
     let index_path = git_abs.join("index");
     
-    // 1. 加载 index（如果不存在则视为空）
+    // 1. 加载 index
     let index_file = parse_index_file(&index_path)
         .with_context(|| format!("parse index {}", index_path.display()))?;
     
-    // 2. 加载 HEAD tree（如果 HEAD 存在且有提交）
-    //let head_tree = load_head_tree(worktree, &git_abs)?;
+    // 2. 加载 HEAD tree
+    let head_tree = load_head_tree(worktree, &git_dir)?;
     
     // 3. 检测已暂存的改动（index vs HEAD）
-    //let staged = detect_staged_changes(&index, &head_tree);
-    let staged = Vec::new();  // 临时设为空
+    let staged = detect_staged_changes(&index_file, &head_tree);
 
     // 4. 扫描工作区，检测未暂存改动和未追踪文件
     let (unstaged, untracked) = scan_worktree(worktree, &git_abs, &index_file)?;
@@ -193,4 +193,137 @@ fn is_stat_changed(md: &fs::Metadata, entry: &Entry) -> bool {
     }
     
     false
+}
+
+/// HEAD tree 的简化表示（只存储路径和哈希）
+pub struct HeadTree {
+    entries: HashMap<Vec<u8>, ObjectSha>,
+}
+
+impl HeadTree {
+    pub fn get_hash(&self, path: &[u8]) -> Option<&ObjectSha> {
+        self.entries.get(path)
+    }
+    
+    pub fn contains_path(&self, path: &[u8]) -> bool {
+        self.entries.contains_key(path)
+    }
+    
+    pub fn entries(&self) -> &HashMap<Vec<u8>, ObjectSha> {
+        &self.entries
+    }
+}
+
+/// 加载 HEAD 提交的根 tree
+/// git_dir:.git 文件/目录的相对路径
+pub fn load_head_tree(worktree: &Path, git_dir: &Path) -> Result<Option<HeadTree>> {
+    // 1. 读取 HEAD
+    let head = match Head::read(worktree, git_dir) {
+        Ok(h) => h,
+        Err(_) => return Ok(None),
+    };
+    let git_abs = resolve_git_dir(worktree, git_dir);
+    // 2. 获取当前 commit 的 OID
+    let commit_oid = match head.current_commit(worktree, git_dir) {
+        Ok(oid) => oid,
+        Err(_) => return Ok(None),
+    };
+    
+    // 3. 读取 commit 对象，获取 tree OID
+    let commit_hex = commit_oid.to_string();
+    let commit_obj = CommitObject::read_loose_commit(&git_abs, &commit_hex);
+    let tree_oid = commit_obj.tree;
+    
+    // 4. 读取 tree 对象
+    let tree_hex = tree_oid.to_string();
+    let tree_obj = TreeObject::read_loose_tree(&git_abs, &tree_hex);
+    
+    // 5. 递归遍历 tree，收集所有文件路径和哈希
+    let mut entries = HashMap::new();
+    traverse_tree(worktree, git_dir, &tree_obj, Vec::new(), &mut entries)?;
+    
+    Ok(Some(HeadTree { entries }))
+}
+
+/// 递归遍历 tree，收集所有文件的路径和哈希
+fn traverse_tree(
+    worktree: &Path,
+    git_dir: &Path,
+    tree: &TreeObject,
+    current_path: Vec<u8>,
+    entries: &mut HashMap<Vec<u8>, ObjectSha>,
+) -> Result<()> {
+    let git_abs = resolve_git_dir(worktree, git_dir);
+    
+    for (name, tree_entry) in tree.entries() {
+        // 构建完整路径
+        let mut path = current_path.clone();
+        if !path.is_empty() {
+            path.push(b'/');
+        }
+        path.extend_from_slice(name.as_encoded_bytes());
+        
+        // 判断是目录还是文件
+        if tree_entry.file_mode == FileMode::Directory {
+            // 是目录，递归读取子 tree
+            let sub_tree_hex = tree_entry.object_name.to_string();
+            let sub_tree = TreeObject::read_loose_tree(&git_abs, &sub_tree_hex);
+            traverse_tree(worktree, git_dir, &sub_tree, path, entries)?;
+        } else {
+            // 是文件或符号链接，记录路径和哈希
+            entries.insert(path, tree_entry.object_name.clone());
+        }
+    }
+    Ok(())
+}
+
+/// 检测已暂存的改动（index vs HEAD）
+fn detect_staged_changes(
+    index: &IndexFile,
+    head_tree: &Option<HeadTree>,
+) -> Vec<StatusEntry> {
+    let mut staged = Vec::new();
+    
+    let head = match head_tree {
+        Some(h) => h,
+        None => {
+            // 没有 HEAD 提交，index 中所有文件都是新文件
+            for entry in index.entries() {
+                staged.push(StatusEntry {
+                    path: entry.decode_entry_path(),
+                    change_type: ChangeType::NewFile,
+                });
+            }
+            return staged;
+        }
+    };
+    
+    // index 有但 HEAD 没有 -> new file
+    for entry in index.entries() {
+        let path_bytes = entry.path();
+        if !head.contains_path(path_bytes) {
+            staged.push(StatusEntry {
+                path: entry.decode_entry_path(),
+                change_type: ChangeType::NewFile,
+            });
+        } else if head.get_hash(path_bytes) != Some(entry.obj_name()) {
+            staged.push(StatusEntry {
+                path: entry.decode_entry_path(),
+                change_type: ChangeType::Modified,
+            });
+        }
+    }
+    
+    // HEAD 有但 index 没有 -> deleted
+    for (path_bytes, _head_hash) in head.entries() {
+        if get_entry(index, path_bytes).is_none() {
+            let path_str = String::from_utf8_lossy(path_bytes);
+            staged.push(StatusEntry {
+                path: PathBuf::from(path_str.as_ref()),
+                change_type: ChangeType::Deleted,
+            });
+        }
+    }
+    
+    staged
 }

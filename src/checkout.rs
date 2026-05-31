@@ -73,9 +73,8 @@ pub fn checkout(
     git_dir: &Path, 
     target: CheckoutTarget
 ) -> Result<()> {
-    let git_abs = resolve_git_dir(worktree, git_dir);
+    let (commit_id, next_head) = resolve_checkout_target(worktree, git_dir, target)?;
 
-    let (commit_id, next_head) = resolve_checkout_target(worktree, git_dir, &git_abs, target)?;
     let git_abs = worktree.join(git_dir);
     let mut commit_reader = 
         Object::open_loose_object_bufreader(&git_abs, &commit_id.to_string())?;
@@ -106,7 +105,6 @@ pub fn checkout(
 fn resolve_checkout_target(
     worktree: &Path,
     git_dir: &Path,
-    git_abs: &Path,
     target: CheckoutTarget,
 ) -> Result<(ObjectSha, Head)> {
     match target {
