@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use crate::git_paths::{get_branch_ref_path};
 use crate::head::Head;
+use crate::symbolic_ref::SymbolicRef;
 use crate::index::index_tree::{BlobLeaf, IndexRootTree, TreeNode};
 use crate::index::{self, IndexFile};
 use crate::object::*;
@@ -110,12 +111,12 @@ fn resolve_checkout_target(
             Ok((commit_id, next_head))
         }
         CheckoutTarget::Branch(branch_name) => {
-            let branch_ref_path = get_branch_ref_path(&branch_name);
-            let branch_ref_abs = git_abs.join(&branch_ref_path);
+            let ref_path = get_branch_ref_path(&branch_name);
+            let branch_ref_abs = git_abs.join(&ref_path);
             let reference = read_ref(git_abs, &branch_ref_abs)
                 .with_context(|| format!("read branch {}", branch_name))?;
             let commit_id = reference.commit_id;
-            let next_head = Head::TargetBranch { branch_ref_path };
+            let next_head = Head::TargetBranch(SymbolicRef { ref_path });
             Ok((commit_id, next_head))
         }
     }

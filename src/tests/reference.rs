@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::PathBuf;
 use crate::git_paths::get_branch_ref_path;
 use crate::object::ObjectSha;
 use crate::reference::{read_ref, write_ref};
@@ -122,7 +123,7 @@ fn read_symbolic_ref_matches_git() {
     // gift 读取 HEAD symbolic ref，断言解析出正确的 ref_name
     let head_path = repo.git_abs.join("HEAD");
     let s = read_symbolic_ref(&head_path).expect("read_symbolic_ref");
-    assert_eq!(s.ref_name, "refs/heads/main");
+    assert_eq!(s.ref_path, PathBuf::from("refs/heads/main"));
 }
 
 /// 流程：git init → 写文件 add → git write-tree → git commit-tree 生成 commit
@@ -143,7 +144,7 @@ fn write_symbolic_ref_matches_git() {
     run_git(&repo.worktree, &["update-ref", "refs/heads/foo", &c0]);
 
     // gift 写入 HEAD → git 读取验证
-    let sym = SymbolicRef { ref_name: "refs/heads/foo".into() };
+    let sym = SymbolicRef { ref_path: PathBuf::from("refs/heads/foo") };
     write_symbolic_ref(&repo.worktree, &repo.git_abs.join("HEAD"), &sym).expect("write_symbolic_ref");
 
     let got = git_stdout(&repo.worktree, &["symbolic-ref", "-q", "HEAD"])

@@ -83,16 +83,9 @@ impl Object {
     }
 }
 
-pub struct BlobObject {
-    object_name: ObjectSha,
-}
+pub struct BlobObject;
 
 impl BlobObject {
-    pub fn object_name(&self) -> &ObjectSha {
-        &self.object_name
-    }
-
-    
     pub fn read_blob_payload<R: BufRead>(
         reader: &mut BufReader<ZlibDecoder<R>>,
         hex_oid: &str
@@ -564,7 +557,7 @@ impl Object {
         reader: &mut BufReader<ZlibDecoder<R>>
     ) -> Result<Object> {    
         if obj_type == "blob" {
-            return Ok(Object::Blob(BlobObject{object_name: oid.clone()}) )
+            return Ok(Object::Blob(BlobObject))
         } else if obj_type == "tree" {
             let tree = TreeObject::read_tree(oid.clone(), reader, true)?;
             return Ok(Object::Tree(tree))

@@ -83,8 +83,8 @@ fn resolve_parents(
                 "detached HEAD")?;
             Ok(vec![oid.clone()])
         }
-        Head::TargetBranch { branch_ref_path } => {
-            let branch_ref_abs = git_abs.join(branch_ref_path);
+        Head::TargetBranch(symref) => {
+            let branch_ref_abs = git_abs.join(&symref.ref_path);
 
             // git init后, HEAD文件中指向的路径还不存在, 此时commit并没有parent
             if !branch_ref_abs.exists() {

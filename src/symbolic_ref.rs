@@ -3,11 +3,11 @@
 use anyhow::{Context, Result, bail};
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SymbolicRef {
-    pub ref_name: String, // `ref:` 后的 Git ref 名（如 `refs/heads/main`）
+    pub ref_path: PathBuf, // `ref:` 后的 Git ref 路径（如 `refs/heads/main`），相对 git_abs
 }
 
 /// 从路径 symref_abs 读取 `ref: …`，得到 ref_name, 包装成 SymbolicRef
@@ -27,7 +27,7 @@ pub fn read_symbolic_ref(
         bail!("empty ref target in {}", symref_abs.display());
     }
     let ref_name = rest.replace('\\', "/");
-    Ok(SymbolicRef { ref_name })
+    Ok(SymbolicRef { ref_path: PathBuf::from(ref_name) })
 }
 
 /// 将 `ref: <ref_name>\n` 写入 `sym_file`
@@ -42,6 +42,6 @@ pub fn write_symbolic_ref(
             .with_context(|| format!("mkdir {}", parent.display()))?;
     }
     let mut f = fs::File::create(&full).with_context(|| format!("write {}", full.display()))?;
-    write!(f, "ref: {}\n", symref.ref_name).with_context(|| format!("write ref {}", full.display()))?;
+    write!(f, "ref: {}\n", symref.ref_path.display()).with_context(|| format!("write ref {}", full.display()))?;
     Ok(())
 }

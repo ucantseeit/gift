@@ -3,17 +3,16 @@
 use anyhow::{Context, Result, bail};
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::object::ObjectSha;
 use crate::reference::{read_ref, write_ref};
 use crate::symbolic_ref::{read_symbolic_ref, write_symbolic_ref, SymbolicRef};
 
-/// 与 `HEAD` 文件内容对应；
-/// `branch_ref_path` 为相对 git_abs 的 tip ref 文件（如 `refs/heads/main`）
+/// 与 `HEAD` 文件内容对应
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Head {
-    TargetBranch { branch_ref_path: PathBuf },
+    TargetBranch(SymbolicRef),
     TargetCommit(ObjectSha),
 }
 
@@ -28,8 +27,7 @@ impl Head {
         let line = content.trim();
         if line.starts_with("ref:") {
             let symref = read_symbolic_ref(&head_path)?;
-            let branch_ref_path = PathBuf::from(symref.ref_name.clone());
-            Ok(Head::TargetBranch { branch_ref_path })
+            Ok(Head::TargetBranch(symref))
         } else {
             let line = line.trim_end_matches(['\r', '\n']);
             if line.lines().nth(1).is_some() {
@@ -55,9 +53,12 @@ impl Head {
         git_abs: &Path
     ) -> Result<ObjectSha> {
         match self {
-            Head::TargetBranch { branch_ref_path } => {
+            Head::TargetBranch(symref) => {
                 Ok(
-                    read_ref(git_abs, &git_abs.join(branch_ref_path))?.commit_id)
+                    read_ref(
+                        git_abs, &git_abs.join(&symref.ref_path)
+                    )?.commit_id
+                )
             }
             Head::TargetCommit(oid) => Ok(oid.clone()),
         }
@@ -71,13 +72,8 @@ impl Head {
     ) -> Result<()> {
         let head_path = git_abs.join("HEAD");
         match self {
-            Head::TargetBranch { branch_ref_path } => {
-                let ref_name = branch_ref_path.to_str().unwrap().to_owned();
-                write_symbolic_ref(
-                    worktree,
-                    &head_path,
-                    &SymbolicRef { ref_name },
-                )?;
+            Head::TargetBranch(symref) => {
+                write_symbolic_ref(worktree, &head_path, symref)?;
             }
             Head::TargetCommit(oid) => {
                 let full = worktree.join(&head_path);
@@ -102,11 +98,8 @@ impl Head {
         new_oid: &ObjectSha,
     ) -> Result<()> {
         match self {
-            Head::TargetBranch { branch_ref_path } => {
-                write_ref(
-                    git_abs, 
-                    &git_abs.join(branch_ref_path), 
-                    new_oid)?;
+            Head::TargetBranch(symref) => {
+                write_ref(git_abs, &git_abs.join(&symref.ref_path), new_oid)?;
             }
             Head::TargetCommit(_) => {
                 Head::TargetCommit(new_oid.clone()).write(worktree, git_abs)?;
