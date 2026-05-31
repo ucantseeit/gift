@@ -30,7 +30,7 @@ fn commit_on_branch_first_then_second() {
     let sym_out = git_stdout(&repo.worktree, &["symbolic-ref", "-q", "HEAD"]);
     assert!(sym_out.trim().starts_with("refs/heads/"), "still symbolic: {}", sym_out.trim());
 
-    let p1 = CommitObject::read_loose_commit(&repo.git_abs, &hex1);
+    let p1 = CommitObject::read_loose_commit(&repo.git_abs, &hex1).unwrap();
     assert!(p1.parents.is_empty(), "root has no parent");
     assert_eq!(p1.message, b"first commit\n");
 
@@ -46,7 +46,7 @@ fn commit_on_branch_first_then_second() {
         .lines().next().unwrap().trim().to_string();
     assert_eq!(head2, hex2);
 
-    let p2 = CommitObject::read_loose_commit(&repo.git_abs, &hex2);
+    let p2 = CommitObject::read_loose_commit(&repo.git_abs, &hex2).unwrap();
     assert_eq!(p2.parents.len(), 1, "second commit has one parent");
     assert_eq!(hex::encode(p2.parents[0].as_bytes()), hex1);
     assert_eq!(p2.message, b"second\n");
@@ -83,7 +83,7 @@ fn commit_on_detached_head_updates_oid_and_parent() {
     let raw_head = fs::read_to_string(repo.worktree.join(".git/HEAD")).unwrap();
     assert_eq!(raw_head.trim(), hex_new, "HEAD must be raw oid");
 
-    let parsed = CommitObject::read_loose_commit(&repo.git_abs, &hex_new);
+    let parsed = CommitObject::read_loose_commit(&repo.git_abs, &hex_new).unwrap();
     assert_eq!(parsed.parents.len(), 1);
     assert_eq!(hex::encode(parsed.parents[0].as_bytes()), c0);
     assert_eq!(parsed.message, b"while detached\n");

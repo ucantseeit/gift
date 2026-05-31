@@ -223,12 +223,12 @@ pub fn load_head_tree(worktree: &Path, git_abs: &Path) -> Result<Option<HeadTree
     
     // 3. 读取 commit 对象，获取 tree OID
     let commit_hex = commit_oid.to_string();
-    let commit_obj = CommitObject::read_loose_commit(&git_abs, &commit_hex);
+    let commit_obj = CommitObject::read_loose_commit(&git_abs, &commit_hex)?;
     let tree_oid = commit_obj.tree;
-    
+
     // 4. 读取 tree 对象
     let tree_hex = tree_oid.to_string();
-    let tree_obj = TreeObject::read_loose_tree(&git_abs, &tree_hex);
+    let tree_obj = TreeObject::read_loose_tree(&git_abs, &tree_hex)?;
     
     // 5. 递归遍历 tree，收集所有文件路径和哈希
     let mut entries = HashMap::new();
@@ -257,7 +257,7 @@ fn traverse_tree(
         if tree_entry.file_mode == FileMode::Directory {
             // 是目录，递归读取子 tree
             let sub_tree_hex = tree_entry.object_name.to_string();
-            let sub_tree = TreeObject::read_loose_tree(&git_abs, &sub_tree_hex);
+            let sub_tree = TreeObject::read_loose_tree(&git_abs, &sub_tree_hex)?;
             traverse_tree(worktree, git_abs, &sub_tree, path, entries)?;
         } else {
             // 是文件或符号链接，记录路径和哈希

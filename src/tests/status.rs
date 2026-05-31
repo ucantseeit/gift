@@ -79,7 +79,7 @@ fn test_load_head_tree_debug() {
     eprintln!("Commit object path: {:?}", commit_obj_path);
     eprintln!("Commit object exists: {}", commit_obj_path.exists());
 
-    let commit_obj = CommitObject::read_loose_commit(&repo.git_abs, &commit_hex);
+    let commit_obj = CommitObject::read_loose_commit(&repo.git_abs, &commit_hex).unwrap();
     eprintln!("✓ Commit object read successfully");
     eprintln!("  - Tree OID: {}", commit_obj.tree.to_string());
     eprintln!("  - Parent count: {}", commit_obj.parents.len());
@@ -92,7 +92,7 @@ fn test_load_head_tree_debug() {
     eprintln!("Tree object path: {:?}", tree_obj_path);
     eprintln!("Tree object exists: {}", tree_obj_path.exists());
 
-    let tree_obj = TreeObject::read_loose_tree(&repo.git_abs, &tree_hex);
+    let tree_obj = TreeObject::read_loose_tree(&repo.git_abs, &tree_hex).unwrap();
     eprintln!("✓ Tree object read successfully");
     eprintln!("  - Entries count: {}", tree_obj.entries().len());
 

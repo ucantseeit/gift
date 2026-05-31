@@ -69,7 +69,7 @@ fn read_commit_matches_git_commit_tree() {
     assert_eq!(c1.len(), 40);
 
     let raw1 = decompress_loose_object(&repo.git_abs, &c1);
-    let parsed1 = CommitObject::read_loose_commit(&repo.git_abs, &c1);
+    let parsed1 = CommitObject::read_loose_commit(&repo.git_abs, &c1).unwrap();
     assert_eq!(hex::encode(parsed1.object_name().as_bytes()), c1);
     assert_eq!(parsed1.parents.len(), 0);
     assert_eq!(parsed1.message, b"first commit\n");
@@ -79,7 +79,7 @@ fn read_commit_matches_git_commit_tree() {
 
     // c2：parent 为 c1
     let c2 = git_commit_tree_with_env(&repo.worktree, &tree_hex, &[&c1], "second commit");
-    let parsed2 = CommitObject::read_loose_commit(&repo.git_abs, &c2);
+    let parsed2 = CommitObject::read_loose_commit(&repo.git_abs, &c2).unwrap();
     assert_eq!(parsed2.parents.len(), 1);
     assert_eq!(hex::encode(parsed2.parents[0].as_bytes()), c1, "single parent oid");
     assert_eq!(parsed2.to_binary(), decompress_loose_object(&repo.git_abs, &c2));
@@ -104,7 +104,7 @@ fn read_commit_merge_two_parents() {
     let p2 = git_commit_tree_with_env(&repo.worktree, &tree_hex, &[], "branch two");
     let merge = git_commit_tree_with_env(&repo.worktree, &tree_hex, &[&p1, &p2], "merge both");
 
-    let parsed = CommitObject::read_loose_commit(&repo.git_abs, &merge);
+    let parsed = CommitObject::read_loose_commit(&repo.git_abs, &merge).unwrap();
     assert_eq!(parsed.parents.len(), 2);
     assert_eq!(hex::encode(parsed.parents[0].as_bytes()), p1);
     assert_eq!(hex::encode(parsed.parents[1].as_bytes()), p2);
@@ -145,7 +145,7 @@ fn commit_tree_writes_loose_object() {
     let loose = crate::git_paths::loose_object_path(&repo.git_abs, &hex_out);
     assert!(loose.is_file(), "loose commit written");
 
-    let round = CommitObject::read_loose_commit(&repo.git_abs, &hex_out);
+    let round = CommitObject::read_loose_commit(&repo.git_abs, &hex_out).unwrap();
     assert_eq!(round.tree, tree_sha);
     assert_eq!(round.message, commit.message);
     assert_eq!(decompress_loose_object(&repo.git_abs, &hex_out), commit.to_binary());

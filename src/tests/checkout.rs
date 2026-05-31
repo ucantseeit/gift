@@ -50,7 +50,7 @@ fn checkout_commit_detaches_and_restores_worktree_without_symlinks() {
     // git write-tree 反映 index 状态，应与 c1 的 tree 一致
     let checked_out_tree = git_stdout(&repo.worktree, &["write-tree"])
         .lines().next().unwrap().trim().to_string();
-    let c1_obj = CommitObject::read_loose_commit(&repo.git_abs, &c1_hex);
+    let c1_obj = CommitObject::read_loose_commit(&repo.git_abs, &c1_hex).unwrap();
     assert_eq!(
         checked_out_tree,
         hex::encode(c1_obj.tree.as_bytes()),

@@ -118,7 +118,7 @@ fn cmp_read_tree_matches_git_ls_tree() {
 
     // 根 tree：gift 解析结果与 git ls-tree 逐条对拍
     let expected_root = git_ls_tree_map(&repo.worktree, &root_hex);
-    let tree_root = TreeObject::read_loose_tree(&repo.git_abs, &root_hex);
+    let tree_root = TreeObject::read_loose_tree(&repo.git_abs, &root_hex).unwrap();
 
     assert_eq!(
         hex::encode(tree_root.object_name().as_bytes()),
@@ -146,13 +146,13 @@ fn cmp_read_tree_matches_git_ls_tree() {
     // 递归验证子 tree：foo/ → 啊/ → bar
     let (_, _, foo_tree_sha) = expected_root.get("foo").expect("foo tree");
     let expected_foo = git_ls_tree_map(&repo.worktree, foo_tree_sha);
-    let tree_foo = TreeObject::read_loose_tree(&repo.git_abs, foo_tree_sha);
+    let tree_foo = TreeObject::read_loose_tree(&repo.git_abs, foo_tree_sha).unwrap();
     assert_eq!(tree_foo.entries().len(), expected_foo.len());
     assert_eq!(tree_foo.entries().len(), 1, "foo/ only contains 啊");
 
     let (_, _, ah_tree_sha) = expected_foo.get("啊").expect("啊 tree under foo");
     let expected_ah = git_ls_tree_map(&repo.worktree, ah_tree_sha);
-    let tree_ah = TreeObject::read_loose_tree(&repo.git_abs, ah_tree_sha);
+    let tree_ah = TreeObject::read_loose_tree(&repo.git_abs, ah_tree_sha).unwrap();
     assert_eq!(tree_ah.entries().len(), 1);
     assert_eq!(tree_ah.entries().len(), expected_ah.len());
 
@@ -253,7 +253,7 @@ fn from_index_file_write_tree_matches_git_write_tree() {
 
     // 逐层对拍 tree entries
     let expected_root = git_ls_tree_map(&repo.worktree, &want_hex);
-    let tree_root = TreeObject::read_loose_tree(&repo.git_abs, &want_hex);
+    let tree_root = TreeObject::read_loose_tree(&repo.git_abs, &want_hex).unwrap();
     assert_eq!(tree_root.entries().len(), expected_root.len());
 
     for (name, entry) in tree_root.entries() {
@@ -272,13 +272,13 @@ fn from_index_file_write_tree_matches_git_write_tree() {
 
     let (_, _, foo_tree_sha) = expected_root.get("foo").expect("foo");
     let expected_foo = git_ls_tree_map(&repo.worktree, foo_tree_sha);
-    let tree_foo = TreeObject::read_loose_tree(&repo.git_abs, foo_tree_sha);
+    let tree_foo = TreeObject::read_loose_tree(&repo.git_abs, foo_tree_sha).unwrap();
     assert_eq!(tree_foo.entries().len(), expected_foo.len());
     assert_eq!(tree_foo.entries().len(), 1);
 
     let (_, _, ah_tree_sha) = expected_foo.get("啊").expect("啊");
     let expected_ah = git_ls_tree_map(&repo.worktree, ah_tree_sha);
-    let tree_ah = TreeObject::read_loose_tree(&repo.git_abs, ah_tree_sha);
+    let tree_ah = TreeObject::read_loose_tree(&repo.git_abs, ah_tree_sha).unwrap();
     assert_eq!(tree_ah.entries().len(), expected_ah.len());
     let bar_entry = tree_ah.entries().get(OsStr::new("bar")).expect("bar");
     assert_eq!(bar_entry.file_mode, FileMode::NExecRegularFile);
