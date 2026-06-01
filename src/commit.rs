@@ -14,7 +14,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use crate::head::Head;
-use crate::index::index_tree::IndexRootTree;
+use crate::index::index_tree::TreeNode;
 use crate::index::parse_index_file;
 use crate::object::{commit_tree, Object, CommitIdentity, CommitObject, ObjectSha};
 
@@ -36,11 +36,9 @@ pub fn commit(
     let index_path = git_abs.join("index");
     let index_file = parse_index_file(&index_path)
         .with_context(|| format!("parse index {}", index_path.display()))?;
-    let index_root = IndexRootTree::from_index_file(&index_file)
+    let index_tree = TreeNode::from_index_file(&index_file)
         .context("index -> IndexRootTree")?;
-    let tree_oid = index_root
-        .write_tree(&git_abs, true)
-        .context("write_tree from index")?;
+    let tree_oid = index_tree.write_tree_return_entry(git_abs, true).object_name;
 
     let head = Head::read(git_abs).context("read HEAD")?;
     let parents = resolve_parents(&git_abs, &head)?;

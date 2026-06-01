@@ -304,6 +304,7 @@ enum ParsedHeader {
     Committer(CommitIdentity),
     Other(String),
 }
+
 impl ParsedHeader {
     fn parse_header_line(line: &str, is_sha1: bool) -> Result<ParsedHeader> {
         if let Some(hex) = line.strip_prefix("tree ") {

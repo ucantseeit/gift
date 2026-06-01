@@ -4,7 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use crate::index;
-use crate::index::index_tree::IndexRootTree;
+use crate::index::index_tree::TreeNode;
 use crate::object::{FileMode, ObjectSha, TreeObject};
 use super::{
     make_test_repo, make_gift_repo, run_git, git_stdout, git_ls_tree_map,
@@ -187,7 +187,7 @@ fn from_index_file_matches_parsed_index_entries() {
     }
 
     // got：经 from_index_file → DFS 收集 blob 叶子
-    let root = IndexRootTree::from_index_file(&idx).expect("from_index_file");
+    let root = TreeNode::from_index_file(&idx).expect("from_index_file");
     let got = collect_blob_leaves_from_root(&root);
 
     assert_eq!(got.len(), idx.entries().len(), "leaf count == index entries");
@@ -233,8 +233,8 @@ fn from_index_file_write_tree_matches_git_write_tree() {
 
     // gift 写 tree，git 写 tree，对比根 OID
     let idx = index::parse_index_file(&repo.git_abs.join("index")).unwrap();
-    let root = IndexRootTree::from_index_file(&idx).expect("from_index_file");
-    let gift_root_oid = root.write_tree(&repo.git_abs, true).expect("write_tree");
+    let root = TreeNode::from_index_file(&idx).expect("from_index_file");
+    let gift_root_oid = root.write_tree_return_entry(&repo.git_abs, true).object_name;
 
     let want_hex = git_stdout(&repo.worktree, &["write-tree"])
         .lines().next().expect("write-tree").trim().to_string();

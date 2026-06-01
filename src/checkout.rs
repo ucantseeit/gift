@@ -9,7 +9,7 @@ use std::str::FromStr;
 use crate::git_paths::{get_branch_ref_path};
 use crate::head::Head;
 use crate::symbolic_ref::SymbolicRef;
-use crate::index::index_tree::{BlobLeaf, IndexRootTree, TreeNode};
+use crate::index::index_tree::{BlobLeaf, TreeNode};
 use crate::index::{self, IndexFile};
 use crate::object::*;
 use crate::reference::read_ref;
@@ -84,7 +84,7 @@ pub fn checkout(
 
     let commit = CommitObject::read_loose_commit(&git_abs, &commit_id.to_string())?;
     let tree = TreeObject::read_loose_tree(&git_abs, &commit.tree.to_string())?;
-    let new_root = IndexRootTree::from_tree_object(&git_abs, &tree)?;
+    let new_root = TreeNode::from_tree_object(&git_abs, &tree)?;
     let new_paths = new_root.blob_paths();
 
     ensure_no_untracked_conflict(&old_paths, &new_paths, &worktree_paths)?;
@@ -128,6 +128,12 @@ impl TreeNode {
         Ok(TreeNode::Tree(children_map))
     }
 
+    pub fn blob_paths(&self) -> BTreeSet<PathBuf> {
+        let mut out = BTreeSet::new();
+        self.collect_blob_paths(PathBuf::new(), &mut out);
+        out
+    }
+
     fn collect_blob_paths(&self, rel: PathBuf, out: &mut BTreeSet<PathBuf>) {
         match self {
             TreeNode::Blob(_) => {
@@ -141,6 +147,15 @@ impl TreeNode {
                 }
             }
         }
+    }
+
+    pub fn to_worktree(
+        &self,
+        worktree: &Path,
+        git_abs: &Path,
+        index_file: &mut IndexFile,
+    )-> Result<()> {
+        self.checkout_to_worktree(worktree, git_abs, &Path::new(""), index_file)
     }
 
     fn checkout_to_worktree(
@@ -164,40 +179,6 @@ impl TreeNode {
             TreeNode::Blob(leaf) => {
                 checkout_blob_to_worktree(worktree, git_abs, rel, leaf, index_file)?;
             }
-        }
-        Ok(())
-    }
-}
-
-impl IndexRootTree {
-    pub fn from_tree_object(git_abs: &Path, tree: &TreeObject) -> Result<Self> {
-        let children_map = 
-            tree_object_to_children_map(git_abs, tree)?;
-        Ok(IndexRootTree {
-            children: children_map,
-        })
-    }
-
-    pub fn blob_paths(&self) -> BTreeSet<PathBuf> {
-        let mut out = BTreeSet::new();
-        for (name, child) in &self.children {
-            let mut rel = PathBuf::new();
-            rel.push(name);
-            child.collect_blob_paths(rel, &mut out);
-        }
-        out
-    }
-
-    pub fn to_worktree(
-        &self,
-        worktree: &Path,
-        git_abs: &Path,
-        index_file: &mut IndexFile,
-    ) -> Result<()> {
-        for (name, child) in &self.children {
-            let mut rel = PathBuf::new();
-            rel.push(name);
-            child.checkout_to_worktree(worktree, git_abs, &rel, index_file)?;
         }
         Ok(())
     }
@@ -243,7 +224,7 @@ fn read_old_index_paths(git_abs: &Path) -> Result<BTreeSet<PathBuf>> {
     }
     let index_file = index::parse_index_file(&index_path)
         .with_context(|| format!("parse index {}", index_path.display()))?;
-    Ok(IndexRootTree::from_index_file(&index_file)?.blob_paths())
+    Ok(TreeNode::from_index_file(&index_file)?.blob_paths())
 }
 
 /// 得到现有 worktree 下所有 blob 的路径 (相对worktree的路径)

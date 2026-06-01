@@ -29,7 +29,7 @@ cargo run --example try_write_hash_object
 
 - **测试依赖系统里真实的 `git` 二进制。** 测试是*差分式*的：`src/tests.rs` 通过 `run_git` / `git_stdout` 调用 `git init` / `git add` / `git write-tree` / `git commit-tree` / `git ls-tree` / `rev-parse`，再断言 gift 的 OID、tree 字节、解析出的结构体与真实 Git 完全一致。
 - **测试仅限 Unix。** 代码大量使用 `std::os::unix`（符号链接、权限、inode/dev、`OsString` 字节转换）；部分测试带 `#[cfg(unix)]`。
-- 每个测试在 `target/inspect/<case>-<unix_ts>/` 下新建独立夹具；这些是构建产物（`/target` 已被 gitignore），可随时删除。
+- 每个测试通过 `make_test_repo` / `make_gift_repo` 在 `target/inspect/<case>-<unix_ts>/` 下新建独立测试目录，返回 `TestRepo { worktree, git_abs }`；这些是构建产物（`/target` 已被 gitignore），可随时删除。
 
 ## 架构
 
@@ -37,7 +37,7 @@ cargo run --example try_write_hash_object
 
 **磁盘原语**
 - `src/object.rs` —— 对象模型。`ObjectSha`（目前只真正支持 SHA1；SHA256 是占位，多数写路径会 `bail!`）、`FileMode`、以及 `Object` 枚举（`Blob`/`Tree`/`Commit`/`Tag`-TODO）。负责 loose object 的读写：`flate2` 做 zlib，处理 `type <len>\0` 头（`read_object_type` → `skip_git_object_size_nul` → `read_*`），以及 `hash_object`、`write_hash_object`、`commit_tree`。`TreeObject`/`CommitObject` 能从解压后的流自解析，并通过 `to_binary` 重新序列化。
-- `src/index.rs` —— `DIRC` 索引文件：`parse_index_file` / `write_index_file`（尾部带 SHA1 校验、entry 按 8 字节对齐、临时文件原子 rename）。子模块 `index_tree` 持有内存目录树（`IndexRootTree` → `TreeNode::{Tree,Blob}` → `BlobLeaf`），用于把扁平索引转成嵌套 tree 对象（`from_index_file` + `write_tree`），以及 checkout 时从 `TreeObject` 重建树（`from_tree_object`，定义在 `checkout.rs`）。
+- `src/index.rs` —— `DIRC` 索引文件：`parse_index_file` / `write_index_file`（尾部带 SHA1 校验、entry 按 8 字节对齐、临时文件原子 rename）。子模块 `index_tree` 持有内存目录树（`TreeNode::{Tree,Blob}` → `BlobLeaf`，原 `IndexRootTree` 已合并进 `TreeNode`）；`TreeNode::from_index_file` 把扁平索引重建为目录层级树，`TreeNode::write_tree_return_entry` 递归写入 loose tree 对象并返回 `TreeEntry`；checkout 时从 `TreeObject` 重建树的 `from_tree_object` 定义在 `checkout.rs`。
 - `src/git_paths.rs` —— 路径约定与 `discover_repo_from_cwd`（向上查找 `.gift`）。
 - `src/reference.rs` —— 直接 ref（40 位 hex 的 OID 文件）：`Ref`、`read_ref`/`update_ref`（都会校验目标是 `commit` 对象）、`branch`。
 - `src/symbolic_ref.rs` —— 符号 ref（`ref: <name>` 文件）。
@@ -53,8 +53,8 @@ cargo run --example try_write_hash_object
 
 ### 贯穿全代码库的约定
 
-- **`worktree` + `git_dir` 参数成对出现。** 多数函数同时接收 `worktree`（工作区根的绝对路径）和 `git_dir`（Git 目录，通常是相对工作区的名字，如 `.git` 或 `.gift`）。用 `git_paths::resolve_git_dir(worktree, git_dir)` 得到绝对 Git 目录。函数对 `git_dir` 是相对还是已绝对都做了兼容（防御性地 `join`/`strip_prefix`），所以测试里既会传相对的 `".git"` 也会传 canonicalize 后的绝对路径。
-- **`.gift` 与 `.git`。** CLI 硬编码 `.gift`（`init` 和 `hash-object` 处理逻辑里直接写 `.gift`；`discover_repo_from_cwd` 搜索 `.gift`）。库函数本身与 Git 目录名无关，而测试套件用 `git init` 创建的真实 `.git` 仓库来驱动它们——同一套代码路径对两者都被覆盖。
+- **`worktree` + `git_abs` 参数成对出现。** 多数函数同时接收 `worktree`（工作区根的绝对路径）和 `git_abs`（Git 目录的绝对路径，如 `/path/to/repo/.git` 或 `/path/to/repo/.gift`）。两者均为绝对路径，函数内部直接使用，不再做 `worktree.join(git_abs)` 转换。`discover_repo_from_cwd()` 返回的 `RepoPaths { worktree, git_abs }` 是获取这两个路径的统一入口。**例外：index entry 内部记录的文件路径是相对 `worktree` 的**，与 git 格式一致，不属于此处的 `git_abs`。
+- **`.gift` 与 `.git`。** CLI 硬编码 `.gift`（`init` 和 `hash-object` 处理逻辑里直接写 `.gift`；`discover_repo_from_cwd` 搜索 `.gift`）。库函数本身与 Git 目录名无关，而测试套件用 `git init` 创建的真实 `.git` 仓库来驱动它们——同一套代码路径对两者都被覆盖。测试中 `make_test_repo` 对应 `.git`，`make_gift_repo` 对应 `.gift`。
 - **需要留意的 CLI 缺口。** `status` 子命令目前只 `println!("Status")`，并**没有**接到 `status::status`。扩展 CLI 时，请对照 `get_args.rs` 与实际库函数。
 - **路径以字节存储。** 索引 entry 路径与 tree entry 名按原始字节（`Vec<u8>` / 经 `OsStrExt` 的 `OsString`）存储与比较，分隔符归一为 `/`，以保留非 UTF-8 / 非 ASCII 名称——与 Git 一致。在意正确性的地方避免经 lossy `String` 往返。
 - **SHA256 并未真正支持。** 类型系统里有 `ObjectSha::SHA256`，但多数写/编码路径对它 `bail!`。可按只有 SHA1 来处理。

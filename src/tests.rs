@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::index::index_tree::{IndexRootTree, TreeNode};
+use crate::index::index_tree::TreeNode;
 use crate::object::{CommitIdentity, FileMode, ObjectSha};
 use flate2::bufread::ZlibDecoder;
 
@@ -194,12 +194,8 @@ pub(super) fn collect_blob_leaves_from_tree(
     }
 }
 
-pub(super) fn collect_blob_leaves_from_root(root: &IndexRootTree) -> BTreeMap<PathBuf, (FileMode, ObjectSha)> {
+pub(super) fn collect_blob_leaves_from_root(root: &TreeNode) -> BTreeMap<PathBuf, (FileMode, ObjectSha)> {
     let mut out = BTreeMap::new();
-    for (seg, child) in root.root_children() {
-        let mut rel = PathBuf::new();
-        rel.push(seg);
-        collect_blob_leaves_from_tree(rel, child, &mut out);
-    }
+    collect_blob_leaves_from_tree(PathBuf::new(), root, &mut out);
     out
 }

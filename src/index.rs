@@ -11,14 +11,6 @@ use anyhow::Result;
 use std::os::unix::fs::MetadataExt;
 use super::object::*;
 
-
-
-// #[derive(Debug, Clone, Copy)]
-// pub enum FileType {
-//     RegularFile,
-//     SymbolicLink,
-// }
-
 #[derive(Debug, Clone)]
 pub struct Entry {
     ctime_sec: u32,
@@ -575,7 +567,7 @@ pub mod index_tree {
     }
 
     impl TreeNode {
-        /// 在本结点必须是 `Tree` 的前提下，沿父路径剩余分量把 `blob` 放进正确的子位置
+        /// 把 blob 沿 `parent_dir_iter` 插入：沿途各级 Tree 的 children map 会被就地修改或新建；本节点必须是 `Tree`，否则 bail!
         pub fn insert_blob(
             &mut self, 
             parent_dir_iter: &mut Components<'_>, 
@@ -585,9 +577,10 @@ pub mod index_tree {
             let TreeNode::Tree(tree) = self else {
                 bail!("Blob无法被合并")
             };
-            insert_blob_into_children_map(tree, parent_dir_iter, blob_file_name, blob)
+            TreeNode::insert_blob_into_children_map(tree, parent_dir_iter, blob_file_name, blob)
         }
 
+        /// 递归把子树写入 loose object，返回本节点的 TreeEntry（Blob 直接返回，Tree 有写磁盘副作用）
         pub fn write_tree_return_entry(&self, git_abs: &Path, is_sha1: bool) -> TreeEntry {
             match self {
                 TreeNode::Blob(b) => {
@@ -607,30 +600,11 @@ pub mod index_tree {
                 }
             }
         }
-    }
 
-    // 根在working_tree文件夹
-    pub struct IndexRootTree {
-        pub children: BTreeMap<OsString, TreeNode>
-    }
-
-    impl IndexRootTree {
-        /// 根结点下第一层子项（用于测试或调试时遍历整棵树）。
-        pub fn root_children(&self) -> &BTreeMap<OsString, TreeNode> {
-            &self.children
-        }
-
-        pub fn insert_blob(
-            &mut self, parent_dir_iter: 
-            &mut Components<'_>, 
-            blob_file_name: OsString, 
-            blob: BlobLeaf
-        ) -> Result<()> {
-            insert_blob_into_children_map(&mut self.children, parent_dir_iter, blob_file_name, blob)
-        }
-
-        pub fn from_index_file(index_file: &IndexFile) -> Result<IndexRootTree> {
-            let mut result = IndexRootTree{children: BTreeMap::new()};
+        /// 把 index 里记录的扁平文件路径还原成与工作区目录层级一致的 TreeNode 树；
+        /// index 条目已按路径字典序排列（BTreeMap 保证），逐条插入即可得到正确的结构
+        pub fn from_index_file(index_file: &IndexFile) -> Result<TreeNode> {
+            let mut result = TreeNode::Tree( BTreeMap::new() );
             for entry in index_file.entries() {
                 let path = entry.decode_entry_path();
                 let Some(file_name) = path.file_name() else {
@@ -650,60 +624,37 @@ pub mod index_tree {
             Ok(result)
         }
 
-        pub fn write_tree(
-            &self, 
-            git_abs: &Path, 
-            is_sha1: bool) 
-        -> Result<ObjectSha>
-        {
-            let entries = write_children_return_entries(&self.children, git_abs.as_ref(), is_sha1);
-            let content = TreeObject::entries_to_binary(entries, is_sha1);
-            let hash: [u8; 20] = Sha1::digest(&content).try_into()?;
-            let object_name = ObjectSha::SHA1(hash);
-            write_hash_object(git_abs, &object_name, &content)?;
-            Ok(object_name)
-        }
-    }
+        /// 每次递归调用从 `parent_dir_iter` 取一个目录分量，
+        /// 在 `map` 中新建或深入对应子树，
+        /// 分量耗尽时将 blob 作为值写入 map
+        fn insert_blob_into_children_map(
+            map: &mut BTreeMap<OsString, TreeNode>,
+            parent_dir_iter: &mut Components<'_>,
+            blob_file_name: OsString,
+            blob: BlobLeaf,
+        ) -> Result<()> {
+            // 提取路径
+            let Some(child_name) = parent_dir_iter
+                .next()
+                .map(|c| c.as_os_str().to_owned())
+            else {
+                // 如果 parent_dir_iter 已经为空, 直接写入 blob 后return
+                map.insert(blob_file_name, TreeNode::Blob(blob));
+                return Ok(());
+            };
 
-    /// 在「当前这一层」的 map 上：按 `parent_dir_iter` 剩余分量插入/合并 `blob`。
-    fn insert_blob_into_children_map(
-        map: &mut BTreeMap<OsString, TreeNode>,
-        parent_dir_iter: &mut Components<'_>,
-        blob_file_name: OsString,
-        blob: BlobLeaf,
-    ) -> Result<()> {
-        let Some(child_name) = parent_dir_iter
-            .next()
-            .map(|c| c.as_os_str().to_owned())
-        else {
-            map.insert(blob_file_name, TreeNode::Blob(blob));
-            return Ok(());
-        };
-
-        match map.entry(child_name) {
-            btree_map::Entry::Occupied(mut e) => {
-                e.get_mut().insert_blob(parent_dir_iter, blob_file_name, blob)?;
+            // 在 map 里新插入子文件夹 (如果这个文件夹还不存在)
+            match map.entry(child_name) {
+                btree_map::Entry::Occupied(mut e) => {
+                    e.get_mut().insert_blob(parent_dir_iter, blob_file_name, blob)?;
+                }
+                btree_map::Entry::Vacant(e) => {
+                    let mut child_map = BTreeMap::new();
+                    Self::insert_blob_into_children_map(&mut child_map, parent_dir_iter, blob_file_name, blob)?;
+                    e.insert(TreeNode::Tree(child_map));
+                }
             }
-            btree_map::Entry::Vacant(e) => {
-                let mut child_map = BTreeMap::new();
-                insert_blob_into_children_map(&mut child_map, parent_dir_iter, blob_file_name, blob)?;
-                e.insert(TreeNode::Tree(child_map));
-            }
+            Ok(())
         }
-        Ok(())
-    }
-
-    fn write_children_return_entries(
-        children: &BTreeMap<OsString, TreeNode>, 
-        git_abs: &Path, 
-        is_sha1: bool) 
-    -> BTreeMap<OsString, TreeEntry> 
-    {
-        let mut entries: BTreeMap<OsString, TreeEntry> = BTreeMap::new();
-        for (file_name, child) in children {
-            let entry = child.write_tree_return_entry(git_abs.as_ref(), is_sha1);
-            entries.insert(file_name.clone(), entry);
-        };
-        entries
     }
 }
