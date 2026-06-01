@@ -14,8 +14,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use crate::head::Head;
-use crate::index::index_tree::TreeNode;
-use crate::index::parse_index_file;
+use crate::index::{index_tree::TreeNode, index_file::parse_index_file};
 use crate::object::{commit_tree, Object, CommitIdentity, CommitObject, ObjectSha};
 
 /// 使用当前 index 创建一次提交：写 tree、写 commit、按 `HEAD` 形态更新引用。

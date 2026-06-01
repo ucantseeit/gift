@@ -1,6 +1,6 @@
 //! 工作区文件暂存（类似 `git add`）：写入 loose objects 并更新 index。
 
-use crate::index::{self, IndexFile};
+use crate::index::{index_file::{self, IndexFile}};
 use crate::object::{self};
 
 use anyhow::{Context, Result, bail};
@@ -45,7 +45,7 @@ pub fn stage_paths(
     
     let index_path = git_abs.join("index");
     let mut index = if index_path.exists() {
-        index::parse_index_file(&index_path).with_context(|| {
+        index_file::parse_index_file(&index_path).with_context(|| {
             format!("parse index {}", index_path.display())
         })?
     } else {
@@ -59,8 +59,8 @@ pub fn stage_paths(
         object::write_hash_object(&git_abs, &sha, &blob_content)?;
 
         let md = fs::symlink_metadata(leaf)?;
-        let path_bytes = index::index_path_bytes(&worktree, leaf)?;
-        index::add_index(
+        let path_bytes = index_file::index_path_bytes(&worktree, leaf)?;
+        index_file::add_index(
             &mut index,
             &md,
             path_bytes,
@@ -69,7 +69,7 @@ pub fn stage_paths(
         .with_context(|| format!("add_index {}", leaf.display()))?;
     }
 
-    index::write_index_file(&index_path, &index).with_context(|| {
+    index_file::write_index_file(&index_path, &index).with_context(|| {
         format!("write_index_file {}", index_path.display())
     })?;
 

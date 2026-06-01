@@ -3,7 +3,7 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
-use crate::index;
+use crate::index::index_file;
 use crate::index::index_tree::TreeNode;
 use crate::object::{FileMode, ObjectSha, TreeObject};
 use super::{
@@ -26,7 +26,7 @@ fn parse_index() {
     run_git(&repo.worktree, &["init"]);
     run_git(&repo.worktree, &["add", "."]);
 
-    index::display_index_file(&repo.git_abs.join("index")).unwrap();
+    index_file::display_index_file(&repo.git_abs.join("index")).unwrap();
 }
 
 /// 流程：gift init → 写文件（顶层 + 子目录）→ gift stage_paths（相当于 git add）
@@ -47,7 +47,7 @@ fn stage_paths_roundtrip_index() {
     let inputs = vec![repo.worktree.join("top.txt"), repo.worktree.join("sub")];
     crate::staging::stage_paths(&repo.git_abs, &repo.worktree, &inputs, true).unwrap();
 
-    let idx = index::parse_index_file(&repo.git_abs.join("index")).unwrap();
+    let idx = index_file::parse_index_file(&repo.git_abs.join("index")).unwrap();
     assert_eq!(idx.version(), 2, "index version");
     assert_eq!(idx.entries().len(), 2, "entry count");
 
@@ -179,7 +179,7 @@ fn from_index_file_matches_parsed_index_entries() {
     run_git(&repo.worktree, &["add", "."]);
 
     // expected：直接从 index entries 建映射
-    let idx = index::parse_index_file(&repo.git_abs.join("index")).unwrap();
+    let idx = index_file::parse_index_file(&repo.git_abs.join("index")).unwrap();
     let mut expected: BTreeMap<PathBuf, (FileMode, ObjectSha)> = BTreeMap::new();
     for e in idx.entries() {
         let path = e.decode_entry_path();
@@ -232,7 +232,7 @@ fn from_index_file_write_tree_matches_git_write_tree() {
     run_git(&repo.worktree, &["add", "."]);
 
     // gift 写 tree，git 写 tree，对比根 OID
-    let idx = index::parse_index_file(&repo.git_abs.join("index")).unwrap();
+    let idx = index_file::parse_index_file(&repo.git_abs.join("index")).unwrap();
     let root = TreeNode::from_index_file(&idx).expect("from_index_file");
     let gift_root_oid = root.write_tree_return_entry(&repo.git_abs, true).object_name;
 

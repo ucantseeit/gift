@@ -12,7 +12,7 @@ use crate::object::{CommitIdentity, FileMode, ObjectSha};
 use flate2::bufread::ZlibDecoder;
 
 mod object;
-mod index;
+mod index_file;
 mod reference;
 mod commit;
 mod checkout;

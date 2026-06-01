@@ -10,7 +10,7 @@ use crate::git_paths::{get_branch_ref_path};
 use crate::head::Head;
 use crate::symbolic_ref::SymbolicRef;
 use crate::index::index_tree::{BlobLeaf, TreeNode};
-use crate::index::{self, IndexFile};
+use crate::index::{index_file, index_file::IndexFile};
 use crate::object::*;
 use crate::reference::read_ref;
 
@@ -92,7 +92,7 @@ pub fn checkout(
 
     let mut new_index = IndexFile::empty(2);
     new_root.to_worktree(worktree, &git_abs, &mut new_index)?;
-    index::write_index_file(&git_abs.join("index"), &new_index)
+    index_file::write_index_file(&git_abs.join("index"), &new_index)
         .with_context(|| format!("write checkout index {}", git_abs.join("index").display()))?;
 
     next_head.write(worktree, git_abs)?;
@@ -222,7 +222,7 @@ fn read_old_index_paths(git_abs: &Path) -> Result<BTreeSet<PathBuf>> {
     if !index_path.exists() {
         return Ok(BTreeSet::new());
     }
-    let index_file = index::parse_index_file(&index_path)
+    let index_file = index_file::parse_index_file(&index_path)
         .with_context(|| format!("parse index {}", index_path.display()))?;
     Ok(TreeNode::from_index_file(&index_file)?.blob_paths())
 }
@@ -406,9 +406,9 @@ fn checkout_blob_to_worktree(
 
     let md = fs::symlink_metadata(&abs)
         .with_context(|| format!("symlink_metadata {}", abs.display()))?;
-    let path_bytes = index::index_path_bytes(worktree, &abs)
+    let path_bytes = index_file::index_path_bytes(worktree, &abs)
         .with_context(|| format!("index path {}", abs.display()))?;
-    index::add_index(index_file, &md, path_bytes, leaf.object_name().clone())
+    index_file::add_index(index_file, &md, path_bytes, leaf.object_name().clone())
         .with_context(|| format!("add checkout index entry {}", rel.display()))?;
     Ok(())
 }

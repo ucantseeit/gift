@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 use anyhow::{Context, Result};
-use crate::index::{parse_index_file,IndexFile,index_path_bytes,Entry};
+use crate::index::index_file::{parse_index_file,IndexFile,index_path_bytes,Entry};
 use std::os::unix::fs::MetadataExt;
 
 use crate::head::Head;
