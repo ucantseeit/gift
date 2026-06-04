@@ -19,6 +19,7 @@ mod checkout;
 mod status;
 mod diff;
 mod merge_base;
+mod merge;
 
 /// 测试用的独立目录，持有 worktree 和 git/gift 仓库目录的绝对路径。
 pub(super) struct TestRepo {

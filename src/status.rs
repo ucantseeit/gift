@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 use anyhow::{Context, Result};
-use crate::index::index_file::{parse_index_file,IndexFile,index_path_bytes,Entry};
+use crate::index::index_file::{parse_index_file, IndexFile, index_path_bytes, Entry};
 use std::os::unix::fs::MetadataExt;
 
 use crate::head::Head;
@@ -35,6 +35,8 @@ pub enum ChangeType {
     NewFile,
     Modified,
     Deleted,
+    /// merge 冲突：index 中存在 stage 1/2/3，无 stage 0
+    Conflicted,
 }
 
 /// 获取工作区状态
@@ -108,7 +110,7 @@ fn scan_worktree(
             
             if let Some(index_entry) = get_entry(index, &rel_bytes) {
                 index_seen.insert(rel_bytes);
-                
+
                 // 快速比较 stat 信息
                 let md = fs::symlink_metadata(&path)?;
                 if is_stat_changed(&md, &index_entry) {
@@ -121,8 +123,15 @@ fn scan_worktree(
                         });
                     }
                 }
+            } else if index.has_conflict_entries(&rel_bytes) {
+                // stage 0 不存在但有 stage 1/2/3：merge 冲突文件
+                index_seen.insert(rel_bytes);
+                unstaged.push(StatusEntry {
+                    path: rel_path.to_path_buf(),
+                    change_type: ChangeType::Conflicted,
+                });
             } else {
-                // 不在 index 中，是未追踪文件
+                // 完全不在 index 中，是未追踪文件
                 untracked.push(rel_path.to_path_buf());
             }
         }
@@ -131,8 +140,8 @@ fn scan_worktree(
     
     walk(worktree, worktree, git_abs, index, &mut unstaged, &mut untracked, &mut index_seen)?;
     
-    // 检查 index 中有但工作区没有的文件（已删除）
-    for entry in index.entries() {
+    // 检查 index 中有但工作区没有的文件（已删除）；只看 stage 0，冲突 entry 不参与
+    for entry in index.entries().filter(|e| e.merge_stage() == 0) {
         let path_str = String::from_utf8_lossy(&entry.path());
         let worktree_path = worktree.join(&*path_str);
         if !worktree_path.exists() && !index_seen.contains(&entry.path().to_vec()) {
