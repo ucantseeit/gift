@@ -4,6 +4,47 @@
 
 ---
 
+## git fetch / push / pull 的关系
+
+- 日期: 2026-06-03
+- 结论: **`pull = fetch + merge`，日常更推荐先 `fetch` 再手动决定如何整合。**
+- 要点:
+  - `git fetch`：只把远程分支下载到本地（`origin/main` 等远程追踪分支），**不动本地分支**，安全无副作用，可以先 `git log origin/main` 看看差异再决定。
+  - `git push`：把本地分支推送到远程，更新远程 ref。
+  - `git pull`：等价于 `fetch` 后立即 `merge`，会直接改动当前分支，如果有冲突或想审查变更则不够灵活。
+  - 推荐习惯：`git fetch && git log HEAD..origin/main` 看差异，再选 `git merge`。
+
+---
+
+## Rust `Hash` trait 的实现原理
+
+- 日期: 2026-06-02
+- 结论: **哈希不是直接对值算，而是把字节流写进一个 `Hasher` 容器，由容器统一做哈希运算。**
+- 两个 trait 的关系:
+  - `Hash`：**被哈希的类型**（整数、字符串、结构体……）实现，负责"把自身字节喂给 `Hasher`"。
+  - `Hasher`：**哈希算法容器**（`DefaultHasher` 等）实现，负责"消费字节流，产出哈希值"。两者角色不同，普通类型只需实现 `Hash`。
+  ```rust
+  pub trait Hash {
+      fn hash<H: Hasher>(&self, state: &mut H);
+  }
+
+  pub trait Hasher {
+      fn write(&mut self, bytes: &[u8]);
+      fn finish(&self) -> u64;
+      // 还有 write_u8 / write_u64 / ... 等便捷方法，默认实现都调用 write
+  }
+  ```
+- 自己实现 `Hash`（不用 `#[derive]`）需要做什么：
+  - 实现 `fn hash<H: Hasher>(&self, state: &mut H)`，调用 `state.write(...)` 或各字段的 `.hash(state)`，把"代表自身唯一性"的字节全部喂给 `state`。
+  - 若还要实现 `Hasher`（自定义算法），还需实现 `write` 和 `finish`。
+- 各类型 `Hash` 实现的规律:
+  - **整数 / 字符串 / 数组&slice**：都实现了 `Hash`，内部直接把字节表示 `write` 进 `Hasher`。
+  - **结构体**：`#[derive(Hash)]` 展开为依次调用每个字段的 `hash(state)`。手动实现时要注意**字段之间加分隔符**（如 `state.write_u8(0xff)`），防止 `("ab","c")` 与 `("a","bc")` 碰撞。
+  - **enum**：先写入变体的判别值（discriminant），再写入字段，天然区分不同变体。
+- 核心性质：**若 `x == y`，则 `H(x) == H(y)`**（反之不必然，碰撞可能存在）。自定义类型实现 `Eq` 时必须同步实现 `Hash` 且逻辑一致——这是 `HashMap`/`HashSet` 正确工作的前提。
+
+---
+
 ## 路径：绝对 vs 相对的权衡
 
 - 日期: 2026-05-31

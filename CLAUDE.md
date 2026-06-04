@@ -37,7 +37,9 @@ cargo run --example try_write_hash_object
 
 **磁盘原语**
 - `src/object.rs` —— 对象模型。`ObjectSha`（目前只真正支持 SHA1；SHA256 是占位，多数写路径会 `bail!`）、`FileMode`、以及 `Object` 枚举（`Blob`/`Tree`/`Commit`/`Tag`-TODO）。负责 loose object 的读写：`flate2` 做 zlib，处理 `type <len>\0` 头（`read_object_type` → `skip_git_object_size_nul` → `read_*`），以及 `hash_object`、`write_hash_object`、`commit_tree`。`TreeObject`/`CommitObject` 能从解压后的流自解析，并通过 `to_binary` 重新序列化。
-- `src/index.rs` —— `DIRC` 索引文件：`parse_index_file` / `write_index_file`（尾部带 SHA1 校验、entry 按 8 字节对齐、临时文件原子 rename）。子模块 `index_tree` 持有内存目录树（`TreeNode::{Tree,Blob}` → `BlobLeaf`，原 `IndexRootTree` 已合并进 `TreeNode`）；`TreeNode::from_index_file` 把扁平索引重建为目录层级树，`TreeNode::write_tree_return_entry` 递归写入 loose tree 对象并返回 `TreeEntry`；checkout 时从 `TreeObject` 重建树的 `from_tree_object` 定义在 `checkout.rs`。
+- `src/index/` —— 已拆分为两个子模块，入口 `src/index.rs` 仅做 `pub mod` 声明。
+  - `index_file.rs`：`DIRC` 二进制格式的读写——`Entry`、`IndexFile`、`parse_index_file` / `write_index_file`（尾部带 SHA1 校验、entry 按 8 字节对齐、临时文件原子 rename）、`add_index`、`index_path_bytes`。
+  - `index_tree.rs`：内存目录树——`TreeNode::{Tree,Blob}` / `BlobLeaf`（原 `IndexRootTree` 已合并进 `TreeNode`）；`TreeNode::from_index_file` 把扁平 index 重建为目录层级树，`TreeNode::write_tree_return_entry` 递归写入 loose tree 对象并返回 `TreeEntry`；checkout 时从 `TreeObject` 重建树的 `from_tree_object` 定义在 `checkout.rs`。
 - `src/git_paths.rs` —— 路径约定与 `discover_repo_from_cwd`（向上查找 `.gift`）。
 - `src/reference.rs` —— 直接 ref（40 位 hex 的 OID 文件）：`Ref`、`read_ref`/`update_ref`（都会校验目标是 `commit` 对象）、`branch`。
 - `src/symbolic_ref.rs` —— 符号 ref（`ref: <name>` 文件）。
