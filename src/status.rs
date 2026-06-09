@@ -14,6 +14,8 @@ use std::os::unix::fs::MetadataExt;
 use crate::head::Head;
 
 use crate::object::{CommitObject, TreeObject, ObjectSha, FileMode};
+
+use crate::ignore::IgnoreRules;
 #[derive(Debug, Default)]
 pub struct Status {
     /// 已暂存的改动（index vs HEAD）
@@ -71,6 +73,8 @@ fn scan_worktree(
     git_abs: &Path,
     index: &IndexFile,
 ) -> Result<(Vec<StatusEntry>, Vec<PathBuf>)> {
+    let ignore_rules = IgnoreRules::load(worktree)
+        .context("load .gitignore for status")?;
     let mut unstaged = Vec::new();
     let mut untracked = Vec::new();
     
@@ -83,6 +87,7 @@ fn scan_worktree(
         worktree: &Path,
         git_abs: &Path,
         index: &IndexFile,
+        ignore_rules: &IgnoreRules,
         unstaged: &mut Vec<StatusEntry>,
         untracked: &mut Vec<PathBuf>,
         index_seen: &mut std::collections::HashSet<Vec<u8>>,
@@ -100,7 +105,7 @@ fn scan_worktree(
             let rel_bytes = index_path_bytes(worktree, &path)?;
             
             if entry.file_type()?.is_dir() {
-                walk(&path, worktree, git_abs, index, unstaged, untracked, index_seen)?;
+                walk(&path, worktree, git_abs, index,ignore_rules,  unstaged, untracked, index_seen)?;
                 continue;
             }
             
@@ -123,13 +128,17 @@ fn scan_worktree(
                 }
             } else {
                 // 不在 index 中，是未追踪文件
+                // 未追踪文件：检查是否被忽略
+                if ignore_rules.is_ignored(&path) {
+                    continue; // 被忽略，不显示
+                }
                 untracked.push(rel_path.to_path_buf());
             }
         }
         Ok(())
     }
     
-    walk(worktree, worktree, git_abs, index, &mut unstaged, &mut untracked, &mut index_seen)?;
+    walk(worktree, worktree, git_abs, index, &ignore_rules, &mut unstaged, &mut untracked, &mut index_seen)?;
     
     // 检查 index 中有但工作区没有的文件（已删除）
     for entry in index.entries() {
