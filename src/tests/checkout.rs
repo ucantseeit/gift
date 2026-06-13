@@ -24,7 +24,7 @@ fn checkout_commit_detaches_and_restores_worktree_without_symlinks() {
     fs::write(repo.worktree.join("a.txt"), "v1\n").unwrap();
     fs::write(repo.worktree.join("old.txt"), "old\n").unwrap();
     run_git(&repo.worktree, &["add", "-A"]);
-    let c1 = commit::commit(&repo.worktree, &repo.git_abs, id.clone(), id.clone(), "first".into())
+    let c1 = commit::commit(&repo.worktree, &repo.git_abs, id.clone(), id.clone(), Some("first".into()))
         .expect("commit c1");
 
     // c2：a.txt(v2)、删 old.txt、加 new.txt
@@ -32,7 +32,7 @@ fn checkout_commit_detaches_and_restores_worktree_without_symlinks() {
     fs::remove_file(repo.worktree.join("old.txt")).unwrap();
     fs::write(repo.worktree.join("new.txt"), "new\n").unwrap();
     run_git(&repo.worktree, &["add", "-A"]);
-    let _c2 = commit::commit(&repo.worktree, &repo.git_abs, id.clone(), id.clone(), "second".into())
+    let _c2 = commit::commit(&repo.worktree, &repo.git_abs, id.clone(), id.clone(), Some("second".into()))
         .expect("commit c2");
 
     // checkout 回 c1
@@ -77,7 +77,7 @@ fn checkout_branch_restores_tip_and_keeps_symbolic_head() {
     fs::write(repo.worktree.join("branch.txt"), "side\n").unwrap();
     fs::write(repo.worktree.join("common.txt"), "side version\n").unwrap();
     run_git(&repo.worktree, &["add", "-A"]);
-    let side_tip = commit::commit(&repo.worktree, &repo.git_abs, id.clone(), id.clone(), "side tip".into())
+    let side_tip = commit::commit(&repo.worktree, &repo.git_abs, id.clone(), id.clone(), Some("side tip".into()))
         .expect("commit side tip");
     let branch_ref_abs = 
         repo.git_abs.join(get_branch_ref_path("side"));
@@ -93,7 +93,7 @@ fn checkout_branch_restores_tip_and_keeps_symbolic_head() {
     fs::write(repo.worktree.join("common.txt"), "main version\n").unwrap();
     fs::write(repo.worktree.join("main.txt"), "main\n").unwrap();
     run_git(&repo.worktree, &["add", "-A"]);
-    let _main_tip = commit::commit(&repo.worktree, &repo.git_abs, id.clone(), id.clone(), "main tip".into())
+    let _main_tip = commit::commit(&repo.worktree, &repo.git_abs, id.clone(), id.clone(), Some("main tip".into()))
         .expect("commit main tip");
 
     // checkout side 分支
@@ -129,14 +129,14 @@ fn checkout_reports_untracked_file_conflict_before_writing() {
     fs::write(repo.worktree.join("conflict.txt"), "tracked in target\n").unwrap();
     fs::write(repo.worktree.join("stable.txt"), "target stable\n").unwrap();
     run_git(&repo.worktree, &["add", "-A"]);
-    let target = commit::commit(&repo.worktree, &repo.git_abs, id.clone(), id.clone(), "target".into())
+    let target = commit::commit(&repo.worktree, &repo.git_abs, id.clone(), id.clone(), Some("target".into()))
         .expect("commit target");
 
     // current commit：不含 conflict.txt
     fs::remove_file(repo.worktree.join("conflict.txt")).unwrap();
     fs::write(repo.worktree.join("stable.txt"), "current stable\n").unwrap();
     run_git(&repo.worktree, &["add", "-A"]);
-    let current = commit::commit(&repo.worktree, &repo.git_abs, id.clone(), id.clone(), "current".into())
+    let current = commit::commit(&repo.worktree, &repo.git_abs, id.clone(), id.clone(), Some("current".into()))
         .expect("commit current");
 
     // 手动创建 untracked 文件，与 target 中的 conflict.txt 路径冲突

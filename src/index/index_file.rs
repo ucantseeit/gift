@@ -142,6 +142,13 @@ impl IndexFile {
     pub fn has_conflict_entries(&self, path: &[u8]) -> bool {
         (1u8..=3).any(|s| self.entries.contains_key(&IndexKey::new(path, s)))
     }
+
+    /// 删除该路径所有 stage（0–3）的 entry。
+    pub fn remove_entry(&mut self, path: &[u8]) {
+        for stage in 0..=3u8 {
+            self.entries.remove(&IndexKey::new(path, stage));
+        }
+    }
 }
 
 /// 解析 Git index 文件。在 **`RUST_LOG`** 含 **`debug`**（例如 `RUST_LOG=gift=debug`）且进程已初始化
