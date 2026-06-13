@@ -15,6 +15,8 @@ pub mod checkout;
 pub mod diff;
 pub mod merge_base;
 pub mod merge;
+pub mod ignore;
+pub mod log;
 
 use get_args::get_args_and_go;
 pub fn run() -> anyhow::Result<()> {
