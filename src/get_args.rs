@@ -6,7 +6,8 @@ use crate::{init,
     commit::commit,
     commit_identity::identities_from_git_env,
     reference::branch,
-    checkout::{CheckoutTarget, checkout}
+    checkout::{CheckoutTarget, checkout},
+    get_packfile_by_network::ls_remote
 };
 use anyhow::Ok;
 use clap::{Parser, Subcommand};
@@ -35,6 +36,10 @@ enum GiftCommand {
     },
 
     Status,
+
+    LsRemote{
+        url: String
+    }
 }
 
 #[derive(Parser, Debug)]
@@ -110,6 +115,10 @@ pub fn get_args_and_go() -> Result<(), anyhow::Error>  {
             Ok(())
         },
         GiftCommand::Status => {println!("Status"); Ok(())},
+        GiftCommand::LsRemote { url } =>{
+            ls_remote(&url)?;
+            Ok(())
+        }
 
     }
 }

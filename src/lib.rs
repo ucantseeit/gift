@@ -12,7 +12,9 @@ pub mod commit;
 pub mod commit_identity;
 pub mod staging;
 pub mod checkout;
-
+pub mod deal_pktlines;
+pub mod get_packfile_by_network;
+pub mod parse_packfile;
 use get_args::get_args_and_go;
 pub fn run() -> anyhow::Result<()> {
     get_args_and_go()
