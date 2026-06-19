@@ -19,8 +19,12 @@ fn test_status_basic() {
     run_git(&repo.worktree, &["add", "file.txt"]);
     run_git(&repo.worktree, &["commit", "-m", "initial"]);
 
-    // 修改但不 add，期望出现在 unstaged
-    fs::write(repo.worktree.join("file.txt"), "v2\n").unwrap();
+    // 修改但不 add，期望出现在 unstaged。
+    // 注意：故意改成**不同长度**的内容。若与原文同尺寸（如 v2\n），在 mtime 粒度
+    // 较粗的文件系统上（如部分 WSL2），add/commit/改写可能共享同一 mtime，stat 比较
+    // 会误判“未变”而漏报——那是真实 git 用 racy-git 规则处理的环境性边角，不适合作为
+    // 本测试的断言前提。改用不同长度后，is_stat_changed 必经 size 分支，确定性检出。
+    fs::write(repo.worktree.join("file.txt"), "version-2\n").unwrap();
 
     let result = status::status(&repo.worktree, &repo.git_abs).expect("status failed");
 

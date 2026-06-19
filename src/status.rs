@@ -79,10 +79,10 @@ fn scan_worktree(
         .context("load .gitignore for status")?;
     let mut unstaged = Vec::new();
     let mut untracked = Vec::new();
-    
+
     // 标记 index 中的哪些条目在工作区被处理过
     let mut index_seen = std::collections::HashSet::new();
-    
+
     // 递归扫描工作区
     fn walk(
         path: &Path,
@@ -107,12 +107,10 @@ fn scan_worktree(
             let rel_bytes = index_path_bytes(worktree, &path)?;
             
             if entry.file_type()?.is_dir() {
-                walk(&path, worktree, git_abs, index,ignore_rules,  unstaged, untracked, index_seen)?;
+                walk(&path, worktree, git_abs, index, ignore_rules, unstaged, untracked, index_seen)?;
                 continue;
             }
-            
-            // 检查是否被忽略（TODO: 实现 .gitignore）
-            
+
             if let Some(index_entry) = get_entry(index, &rel_bytes) {
                 index_seen.insert(rel_bytes);
 
@@ -136,8 +134,11 @@ fn scan_worktree(
                     change_type: ChangeType::Conflicted,
                 });
             } else {
-                // 完全不在 index 中，是未追踪文件
-                untracked.push(rel_path.to_path_buf());
+                // 完全不在 index 中：未追踪文件。被 .gitignore 命中且未追踪的不计入
+                // （与 stage_paths 的忽略语义一致：已追踪文件不受 .gitignore 影响）。
+                if !ignore_rules.is_ignored(&path) {
+                    untracked.push(rel_path.to_path_buf());
+                }
             }
         }
         Ok(())
