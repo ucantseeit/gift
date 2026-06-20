@@ -68,6 +68,11 @@ enum Command {
         /// 分支名
         name: String,
     },
+    /// 把另一条对话线合并进当前线（时间交错重编号 + 双 parent）
+    Merge {
+        /// 要并入的分支名
+        branch: String,
+    },
     /// 切到某节点/方向（转调 git checkout）
     Checkout {
         /// 节点 OID 或分支名
@@ -85,6 +90,7 @@ pub fn run() -> Result<()> {
         Command::Log => run_log(),
         Command::Graph => run_graph(),
         Command::Branch { name } => run_branch(&name),
+        Command::Merge { branch } => run_merge(&branch),
         Command::Checkout { target } => run_checkout(&target),
     }
 }
@@ -209,6 +215,11 @@ fn run_branch(name: &str) -> Result<()> {
     let repo = discover_chat_repo()?;
     let head_abs = repo.git_abs.join("HEAD");
     branch(&repo.git_abs, &head_abs, name)
+}
+
+fn run_merge(branch_name: &str) -> Result<()> {
+    let repo = discover_chat_repo()?;
+    crate::ai::merge::merge(&repo.worktree, &repo.git_abs, branch_name)
 }
 
 fn run_checkout(target: &str) -> Result<()> {

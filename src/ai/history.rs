@@ -25,7 +25,7 @@ use anyhow::{Context, Result};
 
 use crate::ai::messages::{Role, load_messages};
 use crate::head::Head;
-use crate::object::{CommitObject, ObjectSha};
+use crate::object::{CommitObject, ObjectSha, TreeObject};
 use crate::reference::read_ref;
 
 /// commit message 正文里记录过滤上下文的 trailer 前缀(由 `ask` 的 `build_commit_message` 写入)。
@@ -109,12 +109,15 @@ fn line_summary(content: &str) -> String {
 
 /// `giftai graph`:跨所有分支 + HEAD,把整棵对话 DAG 画成缩进树(`git log --graph --all` 的简化版)。
 ///
-/// giftai 正常的 `ask` 只会产生「单 parent」节点,所以这张 DAG 实际是**一棵树**:分叉表现为
-/// 同一父节点下的多个子节点,直观可见。输出形如:
+/// 按 first-parent 建树:`ask` 产生的单 parent 节点是 `● 轮N`(N = 该节点快照的轮数);merge
+/// 产生的多 parent 节点是 `◆ 合并`,并用 `⮌ ← <分支/oid>` 标出被并入的另一侧(不主动展开第二
+/// parent 的历史)。轮号用「快照轮数」而非链深度——合并后深度 ≠ 轮数,只有快照口径与 `--select`
+/// 一致。输出形如:
 /// ```text
-/// └── ● 轮1  09225d9b  记住一个数字：42
-///     ├── ● 轮2  345ca600  我刚才让你记的数字  [master (当前)]
-///     └── ● 轮2  2fa5f9d2  用一个词形容今天天气  [perf]
+/// └── ● 轮1  0bc67959  记住一个数字：42
+///     ├── ● 轮2  5eb409a5  形容今天天气  [perf]
+///     └── ● 轮2  6f1062c8  数字是多少
+///         └── ◆ 合并  15735bc9  Merge perf into master  [master (当前)]  ⮌ ← perf
 /// ```
 pub fn graph(git_abs: &Path) -> Result<()> {
     let head = Head::read(git_abs).context("读取 HEAD 失败")?;
@@ -171,11 +174,25 @@ pub fn graph(git_abs: &Path) -> Result<()> {
     }
     let current_branch = current_branch_name(&head);
 
-    // 5. 从每个根递归渲染(根之间、子节点之间都按时间→hex 排序,输出稳定)。
+    // 5. 预算每个节点的「快照轮数」(= 其 tree 里 NNNN-user 文件数),作为展示轮号。
+    //    用快照口径而非链深度:合并后深度 ≠ 轮数,只有快照数与 select_rounds / --select 对得上。
+    let mut rounds: HashMap<String, u32> = HashMap::new();
+    for (hex, commit) in &commits {
+        rounds.insert(hex.clone(), snapshot_rounds(git_abs, &commit.tree)?);
+    }
+
+    // 6. 从每个根递归渲染(根之间、子节点之间都按时间→hex 排序,输出稳定)。
     sort_by_time(&mut roots, &commits);
-    let ctx = RenderCtx { commits: &commits, children: &children, labels: &labels, current_branch: &current_branch, detached: &detached };
+    let ctx = RenderCtx {
+        commits: &commits,
+        children: &children,
+        labels: &labels,
+        rounds: &rounds,
+        current_branch: &current_branch,
+        detached: &detached,
+    };
     for (i, root) in roots.iter().enumerate() {
-        render_subtree(root, "", i + 1 == roots.len(), 1, &ctx);
+        render_subtree(root, "", i + 1 == roots.len(), &ctx);
     }
     Ok(())
 }
@@ -187,6 +204,7 @@ struct RenderCtx<'a> {
     commits: &'a HashMap<String, CommitObject>,
     children: &'a HashMap<String, Vec<String>>,
     labels: &'a HashMap<String, Vec<String>>,
+    rounds: &'a HashMap<String, u32>,
     current_branch: &'a Option<String>,
     detached: &'a Option<ObjectSha>,
 }
@@ -194,16 +212,27 @@ struct RenderCtx<'a> {
 /// 递归打印以 `hex` 为根的子树。
 ///
 /// - `prefix`:本行之前的缩进/竖线前缀(由上层根据「是否最后一个兄弟」累积而成);
-/// - `is_last`:本节点是否其父的最后一个子节点(决定用 `└──` 还是 `├──`);
-/// - `round`:本节点的轮号(根 = 1,每深一层 +1)。
-fn render_subtree(hex: &str, prefix: &str, is_last: bool, round: usize, ctx: &RenderCtx) {
+/// - `is_last`:本节点是否其父的最后一个子节点(决定用 `└──` 还是 `├──`)。
+///
+/// 普通节点渲染为 `● 轮N`(N 取自快照轮数);合并节点(≥2 parent)渲染为 `◆ 合并` 且不标轮号
+/// (它吸收并重排了多轮,标单个号会误导),改用 `⮌ ← <other parents>` 指出被并入的另一侧。
+fn render_subtree(hex: &str, prefix: &str, is_last: bool, ctx: &RenderCtx) {
     let connector = if is_last { "└── " } else { "├── " };
     let commit = &ctx.commits[hex];
     let (summary, ctx_note) = commit_summary(&commit.message);
+    let is_merge = commit.parents.len() >= 2;
 
-    let mut line = format!("{prefix}{connector}● 轮{round}  {}  {summary}", short_hex_str(hex));
+    let marker = if is_merge {
+        "◆ 合并".to_string()
+    } else {
+        format!("● 轮{}", ctx.rounds.get(hex).copied().unwrap_or(0))
+    };
+    let mut line = format!("{prefix}{connector}{marker}  {}  {summary}", short_hex_str(hex));
     if let Some(tags) = render_labels(hex, ctx) {
         line.push_str(&format!("  {tags}"));
+    }
+    if is_merge {
+        line.push_str(&format!("  ⮌ ← {}", merge_sources(commit, ctx)));
     }
     if let Some(note) = ctx_note {
         line.push_str(&format!("  ({note})"));
@@ -215,8 +244,23 @@ fn render_subtree(hex: &str, prefix: &str, is_last: bool, round: usize, ctx: &Re
     let mut kids = ctx.children.get(hex).cloned().unwrap_or_default();
     sort_by_time(&mut kids, ctx.commits);
     for (i, kid) in kids.iter().enumerate() {
-        render_subtree(kid, &child_prefix, i + 1 == kids.len(), round + 1, ctx);
+        render_subtree(kid, &child_prefix, i + 1 == kids.len(), ctx);
     }
+}
+
+/// 合并节点的「被并入侧」描述:取第 2 个及以后的 parent,有分支名用分支名,否则用短 oid。
+fn merge_sources(commit: &CommitObject, ctx: &RenderCtx) -> String {
+    commit.parents[1..]
+        .iter()
+        .map(|p| {
+            let ph = p.to_string();
+            match ctx.labels.get(&ph).and_then(|names| names.first()) {
+                Some(name) => name.clone(),
+                None => short_hex_str(&ph),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// 拼出某节点的标签串,如 `[master (当前), perf]` 或游离 HEAD 的 `[HEAD 游离]`;无标签返回 `None`。
@@ -325,6 +369,17 @@ fn commit_summary(message: &[u8]) -> (String, Option<String>) {
         .map(|rounds| format!("仅基于第 {} 轮", rounds.trim()));
 
     (summary, ctx_note)
+}
+
+/// 数某个 tree(快照)里的轮数 = `NNNN-user.txt` 文件个数(每轮恰好一个 user 文件)。
+fn snapshot_rounds(git_abs: &Path, tree_oid: &ObjectSha) -> Result<u32> {
+    let tree = TreeObject::read_loose_tree(git_abs, &tree_oid.to_string())?;
+    let n = tree
+        .entries()
+        .keys()
+        .filter(|k| k.to_string_lossy().ends_with("-user.txt"))
+        .count();
+    Ok(n as u32)
 }
 
 /// 取 OID 的前 8 位 hex 作短标识(展示用,不参与寻址)。
