@@ -94,7 +94,6 @@ fn resolve_parents(git_abs: &Path, head: &Head) -> Result<Vec<ObjectSha>> {
 
             // git init 后 tip ref 尚不存在 → 初始提交，无 parent
             if !branch_ref_abs.exists() {
-                println!("{:?}", branch_ref_abs);
                 Vec::new()
             } else {
                 let content = fs::read_to_string(&branch_ref_abs)

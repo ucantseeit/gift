@@ -17,10 +17,16 @@ pub mod merge_base;
 pub mod merge;
 pub mod ignore;
 pub mod log;
+pub mod ai;
 
 use get_args::get_args_and_go;
 pub fn run() -> anyhow::Result<()> {
     get_args_and_go()
+}
+
+/// giftai 二进制入口：AI 对话上下文管理器的 CLI 分发。
+pub fn run_ai() -> anyhow::Result<()> {
+    ai::cli::run()
 }
 
 pub mod status;

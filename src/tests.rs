@@ -22,6 +22,8 @@ mod merge_base;
 mod merge;
 mod ignore;
 mod log;
+mod ai_messages;
+mod ai_llm;
 
 /// 测试用的独立目录，持有 worktree 和 git/gift 仓库目录的绝对路径。
 pub(super) struct TestRepo {

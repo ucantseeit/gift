@@ -118,7 +118,17 @@ pub struct CommitObject {
     pub parents: Vec<ObjectSha>,
     pub author: CommitIdentity,
     pub committer: CommitIdentity,
-    /// author/committer 之后、空行之前的其它 header（整行，不含 `\n`）
+    /// commit 头部里 `committer` 之后、**空行之前**的其它 header 行（每个元素是一整行，不含末尾 `\n`）。
+    ///
+    /// 装的是真实 Git 会写入的「额外对象头部」，例如 `gpgsig`（GPG 签名）、`encoding`、`mergetag`。
+    /// 这些行位于 commit 对象头部区，在分隔正文的空行**之前**。
+    ///
+    /// 注意：**这不是 Git 的 message trailer**（`Signed-off-by:` / `Co-Authored-By:` 那类）。
+    /// 那种 trailer 位于空行**之后**，属于 message 正文，存放在 [`Self::message`] 里，而非本字段。
+    ///
+    /// 现状：本仓库**尚无写入路径主动填充它**——porcelain 的 [`crate::commit::commit`] 始终传入空 `Vec`。
+    /// 目前它仅由 [`Self::read_commit`] 从磁盘上的真实 commit 读出，
+    /// 以便 [`Self::to_binary`] 重新序列化时能**逐字节复现**原对象（保留签名/编码等头部）。
     pub trailing_headers: Vec<String>,
     pub message: Vec<u8>,
 }

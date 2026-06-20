@@ -80,5 +80,40 @@ pub fn discover_repo_from_cwd() -> Result<RepoPaths>{
     bail!("not a gift repository (or any parent): {}", cwd.display());
 }
 
+/// 向上搜索 giftai 对话仓库（`.giftai`），返回解耦布局下的 `RepoPaths`。
+///
+/// 与 [`discover_repo_from_cwd`] 的区别在于 worktree 的位置：
+/// - `git_abs` = 找到的 `.giftai` 目录本身（对话元数据：objects/ refs/ HEAD …）；
+/// - `worktree` = `.giftai` 的**兄弟目录** `<root>/chat`（仅存放消息文件）。
+///
+/// 这样 `.giftai` 放在项目根、对话内容隔离在 `chat/`，二者互不包含，
+/// `giftai` 命令可在项目根或任意子目录直接运行。
+///
+/// 注意：本函数只负责定位，不保证 `chat/` 已存在（由 `giftai init` 创建）。
+pub fn discover_chat_repo() -> Result<RepoPaths> {
+    let cwd = std::env::current_dir()?;
+    let mut cur = fs::canonicalize(&cwd)?;
+    loop {
+        let giftai_path = cur.join(".giftai");
+        if giftai_path.is_dir() {
+            let root = giftai_path
+                .parent()
+                .with_context(|| {
+                    format!("`.giftai` has no parent: {}", giftai_path.display())
+                })?
+                .to_path_buf();
+            return Ok(RepoPaths {
+                worktree: root.join("chat"),
+                git_abs: giftai_path,
+            });
+        }
+        match cur.parent() {
+            Some(parent) => cur = parent.to_path_buf(),
+            None => break,
+        }
+    }
+    bail!("not a giftai repository (or any parent): {}", cwd.display());
+}
+
 
 
