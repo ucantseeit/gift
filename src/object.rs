@@ -556,6 +556,12 @@ pub fn write_hash_object(
 
     let hash = hex::encode(hash.as_bytes());
     let object_file_path = git_paths::loose_object_path(git_abs, &hash);
+    // 内容寻址:同名 loose object 必然内容相同,已存在则跳过写入。
+    // 这既避免无谓重写,也与 Git 行为一致——Git 把 loose object 设为只读(0444),
+    // 若不跳过,覆盖这类对象会触发 Permission denied(混用真实 git 仓库时尤甚)。
+    if object_file_path.exists() {
+        return Ok(());
+    }
     if let Some(object_dir_path) = object_file_path.parent() {
         fs::create_dir_all(object_dir_path)?;
     }
