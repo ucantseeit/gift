@@ -13,11 +13,11 @@ use crate::ai::llm::LlmClient;
 use crate::ai::messages::{
     Message, Role, load_messages, message_filename, next_seq, select_rounds,
 };
+use crate::ai::history;
 use crate::checkout::{CheckoutTarget, checkout};
 use crate::commit::commit;
 use crate::commit_identity::identities_from_git_env;
 use crate::git_paths::discover_chat_repo;
-use crate::log::log;
 use crate::reference::branch;
 use crate::staging::{resolve_stage_inputs, stage_paths};
 
@@ -59,8 +59,10 @@ enum Command {
         #[arg(long, value_delimiter = ',')]
         select: Vec<String>,
     },
-    /// 沿当前链查看历史（每轮主题取自 commit message）
+    /// 沿当前链查看历史：从根到 HEAD 按轮号 + 摘要列出（线性视图）
     Log,
+    /// 跨所有分支画出整棵对话 DAG（带轮号、摘要、分支名的树状视图）
+    Graph,
     /// 给当前方向命名（转调 git branch）
     Branch {
         /// 分支名
@@ -81,6 +83,7 @@ pub fn run() -> Result<()> {
         Command::Ask { select, question } => run_ask(&select, &question),
         Command::Context { select } => run_context(&select),
         Command::Log => run_log(),
+        Command::Graph => run_graph(),
         Command::Branch { name } => run_branch(&name),
         Command::Checkout { target } => run_checkout(&target),
     }
@@ -194,7 +197,12 @@ fn run_context(select: &[String]) -> Result<()> {
 
 fn run_log() -> Result<()> {
     let repo = discover_chat_repo()?;
-    log(&repo.git_abs, None)
+    history::log(&repo.worktree, &repo.git_abs)
+}
+
+fn run_graph() -> Result<()> {
+    let repo = discover_chat_repo()?;
+    history::graph(&repo.git_abs)
 }
 
 fn run_branch(name: &str) -> Result<()> {

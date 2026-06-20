@@ -13,3 +13,4 @@
 pub mod cli;
 pub mod messages;
 pub mod llm;
+pub mod history;
