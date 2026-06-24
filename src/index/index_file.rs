@@ -89,11 +89,22 @@ impl Entry {
     }
 }
 
+/// `IndexFile` 内部 BTreeMap 的键。
+/// 按路径字典序、再按 stage 升序排列，与 Git DIRC 格式的排序规则一致。
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct IndexKey(Vec<u8>, u8);
+
+impl IndexKey {
+    fn new(path: impl Into<Vec<u8>>, stage: u8) -> Self {
+        Self(path.into(), stage)
+    }
+}
+
 #[derive(Debug)]
 pub struct IndexFile {
     version: u32,
-    entries: BTreeMap<Vec<u8>, Entry>,
-    // no supply for extensions now
+    /// key = IndexKey(path_bytes, merge_stage)；支持同路径多 stage 并存（冲突时 stage 1/2/3）
+    entries: BTreeMap<IndexKey, Entry>,
 }
 
 impl IndexFile {
@@ -110,7 +121,7 @@ impl IndexFile {
     }
 
     fn insert_entry(&mut self, entry: Entry) {
-        self.entries.insert(entry.path.clone(), entry);
+        self.entries.insert(IndexKey::new(entry.path.clone(), entry.merge_stage), entry);
     }
 
     pub fn version(&self) -> u32 {
@@ -121,8 +132,22 @@ impl IndexFile {
         self.entries.values()
     }
 
+    /// 查找 stage 0 的 entry（正常状态）。冲突时 stage 0 不存在，返回 None。
     pub fn get_entry(&self, path: &[u8]) -> Option<&Entry> {
-        self.entries.get(path)
+        self.entries.get(&IndexKey::new(path, 0))
+    }
+
+    /// 该路径是否存在 stage 1/2/3 的冲突 entry。
+    /// 用于区分"完全不在 index"和"处于冲突状态"。
+    pub fn has_conflict_entries(&self, path: &[u8]) -> bool {
+        (1u8..=3).any(|s| self.entries.contains_key(&IndexKey::new(path, s)))
+    }
+
+    /// 删除该路径所有 stage（0–3）的 entry。
+    pub fn remove_entry(&mut self, path: &[u8]) {
+        for stage in 0..=3u8 {
+            self.entries.remove(&IndexKey::new(path, stage));
+        }
     }
 }
 
@@ -164,7 +189,7 @@ pub fn parse_index_file(index_path: &Path) -> Result<IndexFile, anyhow::Error> {
             i
         );
         let entry = get_entry(&index_content, &mut i)?;
-        result.entries.insert(entry.path.clone(), entry);
+        result.insert_entry(entry);
     }
 
     Ok(result)
@@ -398,7 +423,10 @@ pub fn add_index(
     let name_length_u =path_bytes.len();
     let name_length: u16 = name_length_u.try_into().unwrap();
 
-    index.entries.remove(&path_bytes);
+    // 写入 stage 0 前，清除同路径的所有 stage（包括冲突时的 1/2/3）
+    for stage in 0..=3u8 {
+        index.entries.remove(&IndexKey::new(path_bytes.clone(), stage));
+    }
 
     let entry = Entry {
         ctime_sec,
@@ -422,6 +450,39 @@ pub fn add_index(
     index.insert_entry(entry);
 
     Ok(())
+}
+
+/// merge 冲突时写入 stage 1（base）/ 2（ours）/ 3（theirs）三条 entry。
+///
+/// 会先清除该路径所有已有 stage（0–3），再写入有内容的那几条。
+/// stat 字段全部清零（与真实 git 行为一致：冲突 entry 不缓存 stat）。
+pub fn insert_conflict_entries(
+    index: &mut IndexFile,
+    path_bytes: Vec<u8>,
+    base: Option<(FileMode, ObjectSha)>,
+    ours: Option<(FileMode, ObjectSha)>,
+    theirs: Option<(FileMode, ObjectSha)>,
+) {
+    for stage in 0..=3u8 {
+        index.entries.remove(&IndexKey::new(path_bytes.clone(), stage));
+    }
+    let name_length = path_bytes.len().min(0xFFF) as u16;
+    for (stage, side) in [(1u8, base), (2u8, ours), (3u8, theirs)] {
+        let Some((mode, oid)) = side else { continue };
+        let entry = Entry {
+            ctime_sec: 0, ctime_nsec: 0,
+            mtime_sec: 0, mtime_nsec: 0,
+            dev: 0, ino: 0,
+            file_mode: mode,
+            uid: 0, gid: 0, file_size: 0,
+            obj_name: oid,
+            assume_valid: false, extended: false,
+            merge_stage: stage,
+            name_length,
+            path: path_bytes.clone(),
+        };
+        index.insert_entry(entry);
+    }
 }
 
 /// 校验写入 index 的路径字节符合git规范

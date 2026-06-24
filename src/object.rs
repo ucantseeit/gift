@@ -25,7 +25,7 @@ pub enum FileMode {
     Directory,          // 40000(注意，长度与其他的不同)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ObjectSha {
     SHA1([u8; 20]),
     SHA256([u8; 32]), // TODO: support SHA256
@@ -376,6 +376,7 @@ fn format_identity_line(prefix: &str, id: &CommitIdentity) -> String {
     )
 }
 
+#[derive(Clone)]
 pub struct TreeEntry {
     pub file_mode: FileMode,
     pub object_name: ObjectSha,

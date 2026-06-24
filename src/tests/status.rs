@@ -261,3 +261,35 @@ fn test_status_functionality() {
 
     eprintln!("\n=== All status tests passed! ===\n");
 }
+/// 测试 .gitignore 对 status 的过滤效果：
+/// - 被忽略的未追踪文件不应出现在 untracked 列表中
+#[test]
+fn test_status_ignored_files_simple() {
+    let repo = make_test_repo("status_ignore_simple");
+
+    // 创建 .gitignore
+    fs::write(repo.worktree.join(".gitignore"), "ignored.txt\n").unwrap();
+
+    // 创建两个文件：一个被忽略，一个正常未追踪
+    fs::write(repo.worktree.join("ignored.txt"), "ignore me").unwrap();
+    fs::write(repo.worktree.join("kept.txt"), "keep me").unwrap();
+
+    // 初始化 Git 仓库（创建 .git 目录和基本结构）
+    run_git(&repo.worktree, &["init"]);
+
+    // 手动创建一个空的 index 文件，避免 status 解析失败
+    let empty_index = crate::index::index_file::IndexFile::empty(2);
+    let index_path = repo.git_abs.join("index");
+    crate::index::index_file::write_index_file(&index_path, &empty_index).unwrap();
+
+    // 调用 status
+    let result = crate::status::status(&repo.worktree, &repo.git_abs).unwrap();
+
+    // 断言：ignored.txt 不在 untracked 中
+    let has_ignored = result.untracked.iter().any(|p| p.to_str().unwrap().contains("ignored.txt"));
+    assert!(!has_ignored, "ignored.txt should NOT be in untracked");
+
+    // 断言：kept.txt 在 untracked 中
+    let has_kept = result.untracked.iter().any(|p| p.to_str().unwrap().contains("kept.txt"));
+    assert!(has_kept, "kept.txt should be in untracked");
+}

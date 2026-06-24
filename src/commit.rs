@@ -12,7 +12,7 @@
 use std::fs;
 use std::path::Path;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use crate::head::Head;
 use crate::index::{index_tree::TreeNode, index_file::parse_index_file};
 use crate::object::{commit_tree, Object, CommitIdentity, CommitObject, ObjectSha};
@@ -30,7 +30,7 @@ pub fn commit(
     git_abs: &Path,
     author: CommitIdentity,
     committer: CommitIdentity,
-    commit_message: String,
+    commit_message: Option<String>,
 ) -> Result<ObjectSha> {
     let index_path = git_abs.join("index");
     let index_file = parse_index_file(&index_path)
@@ -42,7 +42,20 @@ pub fn commit(
     let head = Head::read(git_abs).context("read HEAD")?;
     let parents = resolve_parents(&git_abs, &head)?;
 
-    let mut message = commit_message.into_bytes();
+    // message 优先取调用方传入；无则回退到 MERGE_MSG（merge 冲突解决后 commit）
+    let resolved_message = match commit_message {
+        Some(m) => m,
+        None => {
+            let p = git_abs.join("MERGE_MSG");
+            ensure!(p.exists(), "no -m given and MERGE_MSG not found");
+            fs::read_to_string(&p)
+                .context("read MERGE_MSG")?
+                .trim_end()
+                .to_string()
+        }
+    };
+
+    let mut message = resolved_message.into_bytes();
     if !message.ends_with(b"\n") {
         message.push(b'\n');
     }
@@ -60,60 +73,71 @@ pub fn commit(
     head
         .record_new_commit(worktree, git_abs, &new_oid)
         .context("update HEAD / branch ref")?;
+
+    // merge 完成后清理状态文件（文件不存在时静默忽略）
+    let _ = fs::remove_file(git_abs.join("MERGE_HEAD"));
+    let _ = fs::remove_file(git_abs.join("MERGE_MSG"));
+
     Ok(new_oid)
 }
 
-/// 得到Commit对象的 `parents`
-/// 目前不考虑merge， 故parent只会有一个
-/// 情况1: detached head(即HEAD文件中是一个oid), 那么parent的oid就是head里面包含的oid
-/// 情况2: 非detached head(即HEAD文件中是一个branch ref的路径), 那么parent的oid要从branch ref中取得
-fn resolve_parents(
-    git_abs: &Path, 
-    head: &Head
-) -> Result<Vec<ObjectSha>> {
-    match head {
+/// 解析当前 HEAD 对应的 parent commit 列表，并附加 MERGE_HEAD（若存在）。
+fn resolve_parents(git_abs: &Path, head: &Head) -> Result<Vec<ObjectSha>> {
+    let mut parents = match head {
         Head::TargetCommit(oid) => {
-            let mut reader = 
-                Object::open_loose_object_bufreader(git_abs, &oid.to_string())?;
-            Object::ensure_loose_object_kind(
-                &mut reader, "commit", 
-                "detached HEAD")?;
-            Ok(vec![oid.clone()])
+            let mut reader = Object::open_loose_object_bufreader(git_abs, &oid.to_string())?;
+            Object::ensure_loose_object_kind(&mut reader, "commit", "detached HEAD")?;
+            vec![oid.clone()]
         }
         Head::TargetBranch(symref) => {
             let branch_ref_abs = git_abs.join(&symref.ref_path);
 
-            // git init后, HEAD文件中指向的路径还不存在, 此时commit并没有parent
+            // git init 后 tip ref 尚不存在 → 初始提交，无 parent
             if !branch_ref_abs.exists() {
                 println!("{:?}", branch_ref_abs);
-                return Ok(Vec::new());
-            }
-            let content = fs::read_to_string(&branch_ref_abs)
-                .with_context(|| format!("read branch ref {}", branch_ref_abs.display()))?;
-            let line = content.trim();
+                Vec::new()
+            } else {
+                let content = fs::read_to_string(&branch_ref_abs)
+                    .with_context(|| format!("read branch ref {}", branch_ref_abs.display()))?;
+                let line = content.trim();
 
-            if line.is_empty() {
-                bail!("branch ref file is empty: {}", branch_ref_abs.display());
-            }
-            if line.lines().nth(1).is_some() {
-                bail!("branch ref must be a single line: {}", branch_ref_abs.display());
-            }
-            if line.len() != 40 || !line.chars().all(|c| c.is_ascii_hexdigit()) {
-                bail!("branch ref must be 40 hex chars: {}", branch_ref_abs.display());
-            }
+                if line.is_empty() {
+                    bail!("branch ref file is empty: {}", branch_ref_abs.display());
+                }
+                if line.lines().nth(1).is_some() {
+                    bail!("branch ref must be a single line: {}", branch_ref_abs.display());
+                }
+                if line.len() != 40 || !line.chars().all(|c| c.is_ascii_hexdigit()) {
+                    bail!("branch ref must be 40 hex chars: {}", branch_ref_abs.display());
+                }
 
-            let bytes: [u8; 20] = hex::decode(line)
-                .with_context(|| format!("decode ref {}", branch_ref_abs.display()))?
-                .try_into()
-                .map_err(|v: Vec<u8>| anyhow::anyhow!("ref oid length {}", v.len()))?;
-            let oid = ObjectSha::SHA1(bytes);
-            let mut reader = 
-                Object::open_loose_object_bufreader(git_abs, &oid.to_string())?;
-            Object::ensure_loose_object_kind(
-                &mut reader ,
-                "commit", 
-                "branch tip")?;
-            Ok(vec![oid])
+                let bytes: [u8; 20] = hex::decode(line)
+                    .with_context(|| format!("decode ref {}", branch_ref_abs.display()))?
+                    .try_into()
+                    .map_err(|v: Vec<u8>| anyhow::anyhow!("ref oid length {}", v.len()))?;
+                let oid = ObjectSha::SHA1(bytes);
+                let mut reader = Object::open_loose_object_bufreader(git_abs, &oid.to_string())?;
+                Object::ensure_loose_object_kind(&mut reader, "commit", "branch tip")?;
+                vec![oid]
+            }
         }
+    };
+
+    // merge 进行中时追加 MERGE_HEAD 作为第二 parent
+    let merge_head_path = git_abs.join("MERGE_HEAD");
+    if merge_head_path.exists() {
+        let hex = fs::read_to_string(&merge_head_path)
+            .context("read MERGE_HEAD")?;
+        let hex = hex.trim();
+        let bytes: [u8; 20] = hex::decode(hex)
+            .context("MERGE_HEAD hex decode")?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("MERGE_HEAD OID is not 20 bytes"))?;
+        let oid = ObjectSha::SHA1(bytes);
+        let mut reader = Object::open_loose_object_bufreader(git_abs, &oid.to_string())?;
+        Object::ensure_loose_object_kind(&mut reader, "commit", "MERGE_HEAD")?;
+        parents.push(oid);
     }
+
+    Ok(parents)
 }

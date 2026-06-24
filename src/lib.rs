@@ -16,6 +16,12 @@ pub mod deal_pktlines;
 pub mod get_packfile_by_network;
 pub mod parse_packfile;
 pub mod fetch;
+pub mod diff;
+pub mod merge_base;
+pub mod merge;
+pub mod ignore;
+pub mod log;
+
 use get_args::get_args_and_go;
 pub fn run() -> anyhow::Result<()> {
     get_args_and_go()

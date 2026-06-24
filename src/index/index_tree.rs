@@ -75,7 +75,7 @@ impl TreeNode {
     /// index 条目已按路径字典序排列（BTreeMap 保证），逐条插入即可得到正确的结构
     pub fn from_index_file(index_file: &IndexFile) -> Result<TreeNode> {
         let mut result = TreeNode::Tree( BTreeMap::new() );
-        for entry in index_file.entries() {
+        for entry in index_file.entries().filter(|e| e.merge_stage() == 0) {
             let path = entry.decode_entry_path();
             let Some(file_name) = path.file_name() else {
                 bail!("index文件中存在没有file_name的entry");

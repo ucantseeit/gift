@@ -7,6 +7,7 @@ use anyhow::{Context, Result, bail};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use crate::ignore;
 
 /// 将若干工作区路径暂存：对每个叶子对象计算 blob、写入 `git_abs/objects`，再更新 `git_abs/index`。
 ///
@@ -36,6 +37,10 @@ pub fn stage_paths(
         bail!("no paths to stage");
     }
 
+    // 加载.gitignore规则
+    let ignore_rules = ignore::IgnoreRules::load(worktree)
+        .context("load .gitignore")?;
+
     // 收集所有的"叶子文件"
     let mut leaves = BTreeSet::<PathBuf>::new();
     for root in inputs {
@@ -55,11 +60,22 @@ pub fn stage_paths(
     for leaf in &leaves {
         ensure_not_inside_git_abs(leaf, &git_abs)?;
 
+        let path_bytes = index_file::index_path_bytes(worktree, leaf)?;
+        // 使用 BTreeMap 的 contains_key 方法检查是否已追踪
+        let is_tracked = index.get_entry(&path_bytes).is_some();
+        
+        // 核心逻辑：只有未追踪的文件才检查是否被忽略
+        let ignored = !is_tracked && ignore_rules.is_ignored(leaf);
+        
+        if ignored {
+            continue;  // 跳过被忽略且未追踪的文件
+        }
+
         let (sha, blob_content) = object::hash_object(leaf)?;
         object::write_hash_object(&git_abs, &sha, &blob_content)?;
 
         let md = fs::symlink_metadata(leaf)?;
-        let path_bytes = index_file::index_path_bytes(&worktree, leaf)?;
+        //let path_bytes = index_file::index_path_bytes(&worktree, leaf)?;
         index_file::add_index(
             &mut index,
             &md,

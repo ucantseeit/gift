@@ -1,6 +1,6 @@
 //！ 获取命令行参数,接入对应函数
-use crate::{init, 
-    object::{hash_object, write_hash_object}, 
+use crate::{init,
+    object::{hash_object, write_hash_object},
     staging::{stage_paths, resolve_stage_inputs},
     git_paths::discover_repo_from_cwd,
     commit::commit,
@@ -10,6 +10,7 @@ use crate::{init,
     get_packfile_by_network::ls_remote,
     parse_packfile::{clone, dir_name_from_url},
     fetch::fetch,
+    merge::{merge, MergeOutcome},
 };
 use anyhow::Ok;
 use clap::{Parser, Subcommand};
@@ -27,7 +28,15 @@ enum GiftCommand {
     Add { inputs: Vec<String> },
     Commit {
         #[arg(short = 'm')]
-        message: String
+        message: Option<String>,
+    },
+    /// 将另一个 commit 或分支合并到当前分支。
+    /// `target` 可以是 40 位 hex OID 或本地分支名（如 `feature`）。
+    Merge {
+        target: String,
+        /// 提交消息；省略时自动生成（"Merge branch/commit '<target>'"）
+        #[arg(short = 'm')]
+        message: Option<String>,
     },
     //此时实现的是必须要加name的，即创建新分支功能
     Branch{
@@ -105,16 +114,46 @@ pub fn get_args_and_go() -> Result<(), anyhow::Error>  {
             Ok(())
         },
 
-        GiftCommand::Commit {message}=> {
+        GiftCommand::Commit { message } => {
             let abs_path = discover_repo_from_cwd()?;
             let (auther_about, committer_about) = identities_from_git_env()?;
             let sha = commit(
-                abs_path.worktree.as_path(), 
-                &abs_path.git_abs, 
-                auther_about, 
-                committer_about, message
+                abs_path.worktree.as_path(),
+                &abs_path.git_abs,
+                auther_about,
+                committer_about,
+                message,
             )?;
             println!("the commit ID:{}", sha.to_string());
+            Ok(())
+        }
+
+        GiftCommand::Merge { target, message } => {
+            let abs_path = discover_repo_from_cwd()?;
+            let (author, committer) = identities_from_git_env()?;
+            // 分支名用 "Merge branch '...'"，hex OID 用 "Merge commit '...'"
+            let is_oid = target.len() == 40 && target.chars().all(|c| c.is_ascii_hexdigit());
+            let msg = message.unwrap_or_else(|| {
+                if is_oid {
+                    format!("Merge commit '{}'\n", target)
+                } else {
+                    format!("Merge branch '{}'\n", target)
+                }
+            });
+            match merge(&abs_path.worktree, &abs_path.git_abs, &target, author, committer, &msg)? {
+                MergeOutcome::AlreadyUpToDate => println!("Already up to date."),
+                MergeOutcome::FastForward(oid) => println!("Fast-forward\n  HEAD -> {}", oid.to_string()),
+                MergeOutcome::Clean(oid) => {
+                    println!("Merge made by 'resolve' strategy.\n  {}", oid.to_string());
+                }
+                MergeOutcome::Conflict(paths) => {
+                    eprintln!("CONFLICT: automatic merge failed; fix conflicts and then commit.");
+                    for p in &paths {
+                        eprintln!("  conflict: {}", p.display());
+                    }
+                    std::process::exit(1);
+                }
+            }
             Ok(())
         }
 
@@ -145,6 +184,7 @@ pub fn get_args_and_go() -> Result<(), anyhow::Error>  {
             fetch(&abs_path.git_abs, &url, &remote)?;
             Ok(())
         }
+        GiftCommand::Status => { println!("Status"); Ok(()) }
 
     }
 }

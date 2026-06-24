@@ -19,7 +19,7 @@ fn commit_on_branch_first_then_second() {
     run_git(&repo.worktree, &["add", "track.txt"]);
 
     // 第一次提交：无 parent，HEAD 初次落地
-    let oid1 = commit::commit(&repo.worktree, &repo.git_abs, id.clone(), id.clone(), "first commit".into())
+    let oid1 = commit::commit(&repo.worktree, &repo.git_abs, id.clone(), id.clone(), Some("first commit".into()))
         .expect("first commit");
 
     let hex1 = hex::encode(oid1.as_bytes());
@@ -38,7 +38,7 @@ fn commit_on_branch_first_then_second() {
     fs::write(repo.worktree.join("track.txt"), "v2\n").unwrap();
     run_git(&repo.worktree, &["add", "track.txt"]);
 
-    let oid2 = commit::commit(&repo.worktree, &repo.git_abs, id.clone(), id.clone(), "second".into())
+    let oid2 = commit::commit(&repo.worktree, &repo.git_abs, id.clone(), id.clone(), Some("second".into()))
         .expect("second commit");
 
     let hex2 = hex::encode(oid2.as_bytes());
@@ -76,7 +76,7 @@ fn commit_on_detached_head_updates_oid_and_parent() {
     fs::write(repo.worktree.join("only.txt"), "b\n").unwrap();
     run_git(&repo.worktree, &["add", "only.txt"]);
 
-    let oid_new = commit::commit(&repo.worktree, &repo.git_abs, id.clone(), id.clone(), "while detached".into())
+    let oid_new = commit::commit(&repo.worktree, &repo.git_abs, id.clone(), id.clone(), Some("while detached".into()))
         .expect("commit detached");
 
     let hex_new = hex::encode(oid_new.as_bytes());
