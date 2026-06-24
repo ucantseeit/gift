@@ -121,18 +121,20 @@ pub fn parse_advertisement(r: &mut impl Read) -> io::Result<RefAdvertisement> {
 }
  
  
-/// 顶层：对 `<base>/info/refs?service=git-upload-pack` 发 GET，
-/// 跳过 HTTP 开场白，解析出引用广告。
-/// base 是要clone的链接，形如 "https://github.com/owner/repo.git"
-pub fn discover_refs(base: &str) -> Result<RefAdvertisement, anyhow::Error> {
-    let url = format!(
-        "{}/info/refs?service=git-upload-pack",
-        base.trim_end_matches('/')
-    );
+/// 顶层：对 `<base>/info/refs?service=<service>` 发 GET，跳过 HTTP 开场白，解析引用广告。
+/// `service` 取 `git-upload-pack`（fetch/clone 方向）或 `git-receive-pack`（push 方向）。
+/// base 形如 "https://github.com/owner/repo.git"。
+pub fn discover_refs_for(base: &str, service: &str) -> Result<RefAdvertisement, anyhow::Error> {
+    let url = format!("{}/info/refs?service={service}", base.trim_end_matches('/'));
     let mut res = ureq::get(&url).call()?;
     let mut reader = res.body_mut().as_reader(); // impl Read，直接喂给下面
     skip_smart_http_header(&mut reader)?;
     Ok(parse_advertisement(&mut reader)?)
+}
+
+/// fetch/clone 方向的引用广告（`git-upload-pack`）。
+pub fn discover_refs(base: &str) -> Result<RefAdvertisement, anyhow::Error> {
+    discover_refs_for(base, "git-upload-pack")
 }
 
 

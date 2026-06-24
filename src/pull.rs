@@ -19,7 +19,7 @@ use crate::merge::{MergeOutcome, merge};
 use crate::object::CommitIdentity;
 
 /// 取当前 HEAD 所跟随的本地分支短名（如 `"master"`）。detached HEAD 时报错。
-fn current_branch_name(git_abs: &Path) -> Result<String> {
+pub(crate) fn current_branch_name(git_abs: &Path) -> Result<String> {
     match Head::read(git_abs)? {
         Head::TargetBranch(symref) => {
             let p = symref.ref_path.to_string_lossy().replace('\\', "/"); // refs/heads/master

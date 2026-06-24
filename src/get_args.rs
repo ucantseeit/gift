@@ -12,6 +12,7 @@ use crate::{init,
     fetch::fetch,
     merge::{merge, MergeOutcome},
     pull::pull,
+    push::push,
 };
 use anyhow::Ok;
 use clap::{Parser, Subcommand};
@@ -75,6 +76,17 @@ enum GiftCommand {
         branch: Option<String>,
         #[arg(short = 'm')]
         message: Option<String>,
+    },
+
+    /// 把本地分支推到远端同名分支。`branch` 省略时取当前分支；`-f` 强推（跳过快进检查）。
+    Push{
+        url: String,
+        #[arg(default_value = "origin")]
+        remote: String,
+        #[arg(short = 'b', long = "branch")]
+        branch: Option<String>,
+        #[arg(short = 'f', long = "force")]
+        force: bool,
     }
 
 }
@@ -199,6 +211,11 @@ pub fn get_args_and_go() -> Result<(), anyhow::Error>  {
                 message,
             )?;
             report_merge_outcome(&outcome);
+            Ok(())
+        }
+        GiftCommand::Push { url, remote, branch, force }=>{
+            let abs_path = discover_repo_from_cwd()?;
+            push(&abs_path.worktree, &abs_path.git_abs, &url, &remote, branch.as_deref(), force)?;
             Ok(())
         }
 

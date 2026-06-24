@@ -283,6 +283,76 @@ fn read_loose_base(git_dir: &Path, sha: &[u8; 20]) -> io::Result<Option<(Kind, V
     Ok(Some((kind, content)))
 }
 
+/// 公开入口：按 40 位 hex 读本地松散对象，返回 `(kind, 解压后的内容payload)`。
+/// 对象不存在则报错。push 遍历对象图、取要发送的对象内容时用。
+pub fn read_loose_object_by_hex(git_abs: &Path, hex: &str) -> io::Result<(Kind, Vec<u8>)> {
+    let sha = hex_to_sha(hex)?;
+    read_loose_base(git_abs, &sha)?.ok_or_else(|| bad(format!("对象不在本地对象库: {hex}")))
+}
+
+// ─────────── 构建 packfile（push 用：把对象序列化成 pack v2，全部以完整对象写入） ───────────
+
+/// 写一个对象条目的变长头（类型 + 解压后大小），是 `read_type_and_size` 的逆。
+fn write_pack_obj_header(out: &mut Vec<u8>, kind: Kind, size: usize) {
+    let t: u8 = match kind { Kind::Commit => 1, Kind::Tree => 2, Kind::Blob => 3, Kind::Tag => 4 };
+    let mut b = (t << 4) | ((size as u8) & 0x0f); // bit6-4=类型，低 4 位=size 低 4 bit
+    let mut size = size >> 4;
+    if size != 0 { b |= 0x80; }
+    out.push(b);
+    while size != 0 {
+        let mut c = (size & 0x7f) as u8;
+        size >>= 7;
+        if size != 0 { c |= 0x80; }
+        out.push(c);
+    }
+}
+
+/// 把若干 `(类型, 解压内容)` 组装成 pack v2 字节流：全部写成完整对象（不做 delta，
+/// 因此非 thin、自洽，可被 `parse_pack` / `git index-pack` 直接验证）。末尾附 20 字节 SHA-1。
+pub fn build_pack(objects: &[(Kind, Vec<u8>)]) -> io::Result<Vec<u8>> {
+    let mut out = Vec::new();
+    out.extend_from_slice(b"PACK");
+    out.extend_from_slice(&2u32.to_be_bytes());
+    out.extend_from_slice(&(objects.len() as u32).to_be_bytes());
+    for (kind, content) in objects {
+        write_pack_obj_header(&mut out, *kind, content.len());
+        let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
+        enc.write_all(content)?;
+        out.extend_from_slice(&enc.finish()?);
+    }
+    // 尾部 = 对前面所有字节求 SHA-1（与 parse_pack 的校验对应）
+    let mut h = Sha1::new();
+    h.update(&out);
+    let digest: [u8; 20] = h.finalize().into();
+    out.extend_from_slice(&digest);
+    Ok(out)
+}
+
+#[cfg(test)]
+mod build_pack_tests {
+    use super::*;
+
+    /// build_pack 造出的包应能被 parse_pack 原样解回（OID/类型/内容一致）。
+    #[test]
+    fn build_then_parse_roundtrips() {
+        let objs = vec![
+            (Kind::Blob, b"hello\n".to_vec()),
+            (Kind::Blob, (0..500u32).map(|n| n as u8).collect()), // 大一点，跨多字节 size 头
+            (Kind::Tree, Vec::new()),                              // 空 tree
+        ];
+        let pack = build_pack(&objs).unwrap();
+        assert!(pack.starts_with(b"PACK"));
+        let parsed = parse_pack(&pack).unwrap();
+        assert_eq!(parsed.len(), objs.len());
+        for (po, (k, data)) in parsed.iter().zip(objs.iter()) {
+            assert_eq!(po.kind, *k);
+            assert_eq!(&po.data, data);
+            // OID 应等于 git 口径的 sha1("<type> <size>\0"+content)
+            assert_eq!(po.sha, object_sha(*k, data));
+        }
+    }
+}
+
 pub const META_DIR: &str = ".gift";
  
 use flate2::write::ZlibEncoder;
