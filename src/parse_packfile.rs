@@ -411,7 +411,27 @@ pub fn clone_to_disk(
     Ok(())
 }
 
-pub fn clone(url: &str, dir: &str) -> Result<(), Box<dyn std::error::Error>> {
+/// 像 git 那样，从远程 URL 推导出本地目录名。
+///
+/// 规则：去掉末尾的 `/`，取最后一段路径（`/` 或 scp 风格的 `:` 之后），
+/// 再去掉末尾的 `.git` 后缀。例如：
+/// - `https://github.com/foo/bar.git` → `bar`
+/// - `git@github.com:foo/bar.git`     → `bar`
+/// - `https://example.com/baz/`       → `baz`
+pub fn dir_name_from_url(url: &str) -> Result<String, anyhow::Error> {
+    let trimmed = url.trim_end_matches('/');
+    let last = trimmed
+        .rsplit(|c| c == '/' || c == ':')
+        .next()
+        .unwrap_or("");
+    let name = last.strip_suffix(".git").unwrap_or(last);
+    if name.is_empty() {
+        anyhow::bail!("无法从 URL 推导出目录名: {url}");
+    }
+    Ok(name.to_string())
+}
+
+pub fn clone(url: &str, dir: &str) -> Result<(), anyhow::Error> {
     let work_dir = Path::new(dir);
     std::fs::create_dir_all(work_dir)?;
 

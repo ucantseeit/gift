@@ -7,7 +7,8 @@ use crate::{init,
     commit_identity::identities_from_git_env,
     reference::branch,
     checkout::{CheckoutTarget, checkout},
-    get_packfile_by_network::ls_remote
+    get_packfile_by_network::ls_remote,
+    parse_packfile::{clone, dir_name_from_url}
 };
 use anyhow::Ok;
 use clap::{Parser, Subcommand};
@@ -39,7 +40,12 @@ enum GiftCommand {
 
     LsRemote{
         url: String
+    },
+
+    Clone{
+        url: String
     }
+
 }
 
 #[derive(Parser, Debug)]
@@ -117,6 +123,12 @@ pub fn get_args_and_go() -> Result<(), anyhow::Error>  {
         GiftCommand::Status => {println!("Status"); Ok(())},
         GiftCommand::LsRemote { url } =>{
             ls_remote(&url)?;
+            Ok(())
+        },
+        GiftCommand::Clone { url }=>{
+            let dir = dir_name_from_url(&url)?;
+            println!("Cloning into '{dir}'...");
+            clone(&url, &dir)?;
             Ok(())
         }
 

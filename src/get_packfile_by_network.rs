@@ -208,7 +208,7 @@ fn select_caps(adv: &RefAdvertisement) -> Vec<&'static str> {
  fn send_want_request(
     base: &str,
     body: &[u8],
-) -> Result<ureq::http::Response<ureq::Body>, Box<dyn std::error::Error>> {
+) -> Result<ureq::http::Response<ureq::Body>, anyhow::Error> {
     let url = format!("{}/git-upload-pack", base.trim_end_matches('/'));
     let res = ureq::post(&url)
         .header("Content-Type", "application/x-git-upload-pack-request")
@@ -261,7 +261,7 @@ fn read_pack_response(r: &mut impl Read) -> io::Result<Vec<u8>> {
 pub fn fetch_pack(
     base: &str,
     adv: &RefAdvertisement,
-) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+) -> Result<Vec<u8>, anyhow::Error> {
     let body = build_want_request(adv)?;
     let mut res = send_want_request(base, &body)?;
     // packfile 可能很大：把 ureq reader 上限调高（这里 1 GiB），整段读进内存再解复用
