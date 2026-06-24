@@ -16,6 +16,7 @@ pub mod deal_pktlines;
 pub mod get_packfile_by_network;
 pub mod parse_packfile;
 pub mod fetch;
+pub mod pull;
 pub mod diff;
 pub mod merge_base;
 pub mod merge;

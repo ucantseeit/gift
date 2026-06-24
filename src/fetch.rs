@@ -1,18 +1,3 @@
-//! `git fetch` 的最小实现：复用 clone 那套网络 / packfile 解析逻辑
-//! （discover_refs → fetch_pack → parse_pack），但**落地方式不同**：
-//!   - 把对象写进**已存在**仓库的对象库（已存在的松散对象会被跳过）；
-//!   - 只更新**远程跟踪引用** `refs/remotes/<remote>/*`（标签照搬到
-//!     `refs/tags/*`），并（重）写 `FETCH_HEAD`；
-//!   - **既不动 HEAD，也不动本地分支 `refs/heads/*`，更不 checkout 工作区。**
-//!
-//! 与 clone 的对照：clone 是 `clone()`（网络）+ `clone_to_disk()`（落盘）；
-//! 这里同样拆成 `fetch()`（网络）+ `fetch_to_disk()`（落盘），后者可离线测试。
-//!
-//! **增量协商**：fetch 会把本地已有的对象（所有本地 ref 的 tip，外加 detached
-//! HEAD）作为 `have` 发给服务器，服务器据此只回我们缺的对象，并可能回 **thin-pack**
-//! （新对象 delta 在我们已有的旧对象上）。thin-pack 由 `parse_pack_thin` 增厚——
-//! 它在 ref-delta 的基对象不在包内时，去本地对象库把基读出来再套 delta。
-
 use std::collections::HashSet;
 use std::fs;
 use std::io;
