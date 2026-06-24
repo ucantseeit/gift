@@ -8,7 +8,8 @@ use crate::{init,
     reference::branch,
     checkout::{CheckoutTarget, checkout},
     get_packfile_by_network::ls_remote,
-    parse_packfile::{clone, dir_name_from_url}
+    parse_packfile::{clone, dir_name_from_url},
+    fetch::fetch,
 };
 use anyhow::Ok;
 use clap::{Parser, Subcommand};
@@ -44,6 +45,14 @@ enum GiftCommand {
 
     Clone{
         url: String
+    },
+
+    //从远端拉取对象并更新远程跟踪引用 refs/remotes/<remote>/*；
+    //不动 HEAD / 本地分支 / 工作区。remote 默认 "origin"。
+    Fetch{
+        url: String,
+        #[arg(default_value = "origin")]
+        remote: String
     }
 
 }
@@ -129,6 +138,11 @@ pub fn get_args_and_go() -> Result<(), anyhow::Error>  {
             let dir = dir_name_from_url(&url)?;
             println!("Cloning into '{dir}'...");
             clone(&url, &dir)?;
+            Ok(())
+        },
+        GiftCommand::Fetch { url, remote }=>{
+            let abs_path = discover_repo_from_cwd()?;
+            fetch(&abs_path.git_abs, &url, &remote)?;
             Ok(())
         }
 

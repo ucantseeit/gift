@@ -3,8 +3,8 @@
 // Cargo.toml 需要: flate2 = "1"   sha1 = "0.10"
 //
 
-use crate::get_packfile_by_network::{RefAdvertisement, parse_advertisement, discover_refs, fetch_pack};
-
+use crate::get_packfile_by_network::{RefAdvertisement, discover_refs, fetch_pack};
+use crate::get_packfile_by_network::parse_advertisement;
 use std::collections::HashMap;
 use std::io::{self, Read};
 use std::io::Write;
@@ -151,8 +151,22 @@ fn object_sha(kind: Kind, content: &[u8]) -> [u8; 20] {
 }
 
 // ─────────── 主流程 ───────────
-//output是一系列的对象。
+
+/// 普通（自洽）pack：所有 delta 的基对象都必须在本 pack 内。clone 用这个。
 pub fn parse_pack(data: &[u8]) -> io::Result<Vec<PackedObject>> {
+    parse_pack_inner(data, None)
+}
+
+/// thin-pack 版：ref-delta 的基对象允许**不在本 pack 内**，此时去 `git_dir`
+/// 的松散对象库里找并“增厚”。git fetch 的增量传输会产生这种包——服务器把新
+/// 对象 delta 在“客户端已有的旧对象”上，从而只发很小的差异。
+pub fn parse_pack_thin(data: &[u8], git_dir: &Path) -> io::Result<Vec<PackedObject>> {
+    parse_pack_inner(data, Some(git_dir))
+}
+
+/// `git_dir` 为 `Some` 时支持 thin-pack（外部基对象从本地对象库解析）。
+//output是一系列的对象。
+fn parse_pack_inner(data: &[u8], git_dir: Option<&Path>) -> io::Result<Vec<PackedObject>> {
     if data.len() < 12 + 20 {
         return Err(bad("pack 太短"));
     }
@@ -169,6 +183,8 @@ pub fn parse_pack(data: &[u8]) -> io::Result<Vec<PackedObject>> {
     let mut objects: Vec<PackedObject> = Vec::with_capacity(count);
     let mut by_offset: HashMap<usize, usize> = HashMap::new(); // pack偏移 → objects 下标
     let mut by_sha: HashMap<[u8; 20], usize> = HashMap::new();
+    // thin-pack 外部基对象缓存：sha → (kind, 解压内容)，避免同一基重复读盘
+    let mut ext_cache: HashMap<[u8; 20], (Kind, Vec<u8>)> = HashMap::new();
 
     for _ in 0..count {
         let obj_offset = pos;
@@ -198,10 +214,24 @@ pub fn parse_pack(data: &[u8]) -> io::Result<Vec<PackedObject>> {
                 pos += 20;
                 let (delta, used) = inflate(&data[pos..], size)?;
                 pos += used;
-                let &bi = by_sha.get(&base_sha)
-                    .ok_or_else(|| bad("ref-delta 基对象不在本 pack（thin pack，暂不支持）"))?;
-                let base = &objects[bi];
-                (base.kind, apply_delta(&base.data, &delta)?)
+                if let Some(&bi) = by_sha.get(&base_sha) {
+                    // 基就在本 pack 内
+                    let base = &objects[bi];
+                    (base.kind, apply_delta(&base.data, &delta)?)
+                } else {
+                    // thin-pack：基是“客户端已有”的外部对象，去本地对象库找
+                    let git_dir = git_dir.ok_or_else(|| {
+                        bad("ref-delta 基对象不在本 pack（thin pack，未提供本地对象库）")
+                    })?;
+                    if !ext_cache.contains_key(&base_sha) {
+                        let loaded = read_loose_base(git_dir, &base_sha)?.ok_or_else(|| {
+                            bad("ref-delta 外部基对象在本地对象库也找不到")
+                        })?;
+                        ext_cache.insert(base_sha, loaded);
+                    }
+                    let (bk, bd) = ext_cache.get(&base_sha).unwrap();
+                    (*bk, apply_delta(bd, &delta)?)
+                }
             }
             other => return Err(bad(format!("未知对象类型 {other}"))),
         };
@@ -224,6 +254,33 @@ pub fn parse_pack(data: &[u8]) -> io::Result<Vec<PackedObject>> {
     }
 
     Ok(objects)
+}
+
+/// 从本地对象库读一个松散对象，返回 `(kind, 解压后的内容payload)`（不含 `<type> <size>\0` 头）。
+/// 文件不存在返回 `Ok(None)`。供 thin-pack 的 ref-delta 解析外部基对象用。
+fn read_loose_base(git_dir: &Path, sha: &[u8; 20]) -> io::Result<Option<(Kind, Vec<u8>)>> {
+    let hex = to_hex(sha);
+    let path = git_dir.join("objects").join(&hex[0..2]).join(&hex[2..]);
+    let bytes = match fs::read(&path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    // loose 对象 = zlib( "<type> <size>\0" + content )
+    let mut dec = ZlibDecoder::new(&bytes[..]);
+    let mut raw = Vec::new();
+    dec.read_to_end(&mut raw)?;
+    let sp = raw.iter().position(|&b| b == b' ').ok_or_else(|| bad("loose 对象缺类型空格"))?;
+    let nul = raw.iter().position(|&b| b == 0).ok_or_else(|| bad("loose 对象缺 NUL"))?;
+    let kind = match &raw[..sp] {
+        b"commit" => Kind::Commit,
+        b"tree" => Kind::Tree,
+        b"blob" => Kind::Blob,
+        b"tag" => Kind::Tag,
+        other => return Err(bad(format!("未知 loose 类型 {}", String::from_utf8_lossy(other)))),
+    };
+    let content = raw[nul + 1..].to_vec();
+    Ok(Some((kind, content)))
 }
 
 pub const META_DIR: &str = ".gift";
@@ -252,7 +309,7 @@ fn hex_to_sha(h: &str) -> io::Result<[u8; 20]> {
  
 // ─────────── 1) 对象落盘为松散对象 ───────────
  
-fn write_loose_object(git_dir: &Path, obj: &PackedObject) -> io::Result<()> {
+pub fn write_loose_object(git_dir: &Path, obj: &PackedObject) -> io::Result<()> {
     let hex = to_hex(&obj.sha);
     let dir = git_dir.join("objects").join(&hex[0..2]);
     let path = dir.join(&hex[2..]);
@@ -436,7 +493,7 @@ pub fn clone(url: &str, dir: &str) -> Result<(), anyhow::Error> {
     std::fs::create_dir_all(work_dir)?;
 
     let adv     = discover_refs(url)?;        // 第3步：RefAdvertisement（refs + HEAD）
-    let pack    = fetch_pack(url, &adv)?;     // 第4+5步：发 want、解复用 → .pack 字节
+    let pack    = fetch_pack(url, &adv, &[])?; // 第4+5步：发 want（无 have）、解复用 → .pack 字节
     let objects = parse_pack(&pack)?;         // 第6步：解析出 Vec<PackedObject>
     clone_to_disk(work_dir, META_DIR, &objects, &adv)?; // 第7步：落盘 + checkout
 

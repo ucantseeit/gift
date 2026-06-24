@@ -165,8 +165,10 @@ fn wants_for_clone(adv: &RefAdvertisement) -> Vec<String> {
 }
  
 // 本次要带的能力位：只取服务器也支持的。side-band-64k 是读响应的前提。
+// thin-pack：声明“我能增厚 thin pack”，服务器才会在增量 fetch 时回 thin pack
+// （把新对象 delta 在客户端已有的旧对象上）。我们用 parse_pack_thin 来增厚。
 fn select_caps(adv: &RefAdvertisement) -> Vec<&'static str> {
-    ["side-band-64k", "ofs-delta", "multi_ack_detailed"]
+    ["side-band-64k", "thin-pack", "ofs-delta", "multi_ack_detailed"]
         .into_iter()
         .filter(|c| adv.has_cap(c))
         .collect()
@@ -176,9 +178,12 @@ fn select_caps(adv: &RefAdvertisement) -> Vec<&'static str> {
 // 把广告变成 want 请求的字节体：
 //   want <sha> <caps>\n  (首行带能力位)
 //   want <sha>\n …
-//   0000                 (flush)
-//   done\n               (无 have，直接收尾)
- fn build_want_request(adv: &RefAdvertisement) -> io::Result<Vec<u8>> {
+//   0000                 (flush，want 列表结束)
+//   have <sha>\n …       (客户端已有的对象，用于协商；clone 时为空)
+//   done\n               (收尾)
+//
+// `haves` 非空时即“增量 fetch”：服务器据此只发我们缺的对象，并可能回 thin pack。
+ fn build_want_request(adv: &RefAdvertisement, haves: &[String]) -> io::Result<Vec<u8>> {
     let wants = wants_for_clone(adv);
     if wants.is_empty() {
         return Err(io::Error::new(
@@ -188,7 +193,7 @@ fn select_caps(adv: &RefAdvertisement) -> Vec<&'static str> {
     }
     let caps = select_caps(adv);
     let cap_str = caps.join(" ");
- 
+
     let mut buf = Vec::new();
     for (i, sha) in wants.iter().enumerate() {
         let line = if i == 0 && !cap_str.is_empty() {
@@ -199,7 +204,10 @@ fn select_caps(adv: &RefAdvertisement) -> Vec<&'static str> {
         write_pkt_line(&mut buf, &PktLine::Data(line.into_bytes()))?;
     }
     write_pkt_line(&mut buf, &PktLine::Flush)?; // want 列表结束
-    write_pkt_line(&mut buf, &PktLine::Data(b"done\n".to_vec()))?; // 没有 have，直接 done
+    for h in haves {
+        write_pkt_line(&mut buf, &PktLine::Data(format!("have {h}\n").into_bytes()))?;
+    }
+    write_pkt_line(&mut buf, &PktLine::Data(b"done\n".to_vec()))?; // 收尾
     Ok(buf)
 }
  
@@ -257,12 +265,14 @@ fn read_pack_response(r: &mut impl Read) -> io::Result<Vec<u8>> {
     Ok(pack)
 }
  
-/// 串起第 4、5 步：拼 want → POST → 解复用 → 返回 packfile 字节。
+/// 串起第 4、5 步：拼 want（含 haves）→ POST → 解复用 → 返回 packfile 字节。
+/// clone 传空 `haves`；fetch 传本地已有对象做增量协商。
 pub fn fetch_pack(
     base: &str,
     adv: &RefAdvertisement,
+    haves: &[String],
 ) -> Result<Vec<u8>, anyhow::Error> {
-    let body = build_want_request(adv)?;
+    let body = build_want_request(adv, haves)?;
     let mut res = send_want_request(base, &body)?;
     // packfile 可能很大：把 ureq reader 上限调高（这里 1 GiB），整段读进内存再解复用
     let bytes = res.body_mut().with_config().limit(1024 * 1024 * 1024).read_to_vec()?;
@@ -369,7 +379,7 @@ mod want_tests {
     #[test]
     fn want_request_is_well_formed() {
         let adv = real_adv();
-        let body = build_want_request(&adv).unwrap();
+        let body = build_want_request(&adv, &[]).unwrap();
  
         // 把请求体解回来检查结构
         let mut cur: &[u8] = &body;
@@ -457,7 +467,7 @@ mod get_pack_tests {
             .output().unwrap().stdout;
         let mut cur: &[u8] = &adv_bytes;
         let adv = parse_advertisement(&mut cur).unwrap();
-        let want = build_want_request(&adv).unwrap();
+        let want = build_want_request(&adv, &[]).unwrap();
  
         // 3) 让 git 按 HTTP(stateless-rpc) 模式处理请求，吐出真实 side-band 响应
         let mut child = Command::new("git")
@@ -483,7 +493,93 @@ mod get_pack_tests {
             .current_dir(&dir)
             .status().unwrap().success();
         assert!(ok, "git index-pack 校验失败 → 说明 demux 把字节拼错了");
- 
+
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── 增量 fetch 集成测试：have 协商 + 真 git 回 thin-pack + parse_pack_thin 增厚 ──
+
+    #[test]
+    fn incremental_fetch_thickens_thin_pack() {
+        use crate::parse_packfile::{parse_pack, parse_pack_thin};
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        fn run(c: &mut Command) {
+            assert!(c.status().unwrap().success(), "命令失败: {c:?}");
+        }
+        fn rev_parse(repo: &std::path::Path, what: &str) -> String {
+            let out = Command::new("git").arg("-C").arg(repo).args(["rev-parse", what])
+                .output().unwrap().stdout;
+            String::from_utf8(out).unwrap().trim().to_string()
+        }
+
+        let env = [
+            ("GIT_AUTHOR_NAME", "t"), ("GIT_AUTHOR_EMAIL", "t@t"),
+            ("GIT_COMMITTER_NAME", "t"), ("GIT_COMMITTER_EMAIL", "t@t"),
+        ];
+
+        // 1) 源仓库：大文件，提交 v1（大文件确保后续小改动走 delta）
+        let src = std::env::temp_dir().join(format!("incsrc_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&src);
+        run(Command::new("git").args(["init", "-q"]).arg(&src));
+        let big: String = (1..=400).map(|n| format!("line {n}\n")).collect();
+        std::fs::write(src.join("data.txt"), &big).unwrap();
+        run(Command::new("git").arg("-C").arg(&src).args(["add", "."]));
+        run(Command::new("git").arg("-C").arg(&src).args(["commit", "-q", "-m", "v1"]).envs(env));
+
+        // 2) 客户端：真 git clone 到 v1（于是客户端对象库里有 v1 的全部对象）
+        let client = std::env::temp_dir().join(format!("incclient_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&client);
+        run(Command::new("git").args(["clone", "-q"]).arg(&src).arg(&client));
+        let v1 = rev_parse(&client, "HEAD");
+
+        // 3) 源仓库前进一步：小改动 → 提交 v2（新 blob 会 delta 在 v1 的旧 blob 上）
+        std::fs::write(src.join("data.txt"), format!("{big}line 401\n")).unwrap();
+        run(Command::new("git").arg("-C").arg(&src).args(["add", "."]));
+        run(Command::new("git").arg("-C").arg(&src).args(["commit", "-q", "-m", "v2"]).envs(env));
+        let v2 = rev_parse(&src, "HEAD");
+
+        // 4) 客户端发起 fetch：解析广告（tips=v2），have=本地已有的 v1
+        let adv_bytes = Command::new("git").args(["upload-pack", "--advertise-refs"]).arg(&src)
+            .output().unwrap().stdout;
+        let mut cur: &[u8] = &adv_bytes;
+        let adv = parse_advertisement(&mut cur).unwrap();
+        let haves = vec![v1.clone()];
+        let want = build_want_request(&adv, &haves).unwrap();
+
+        // 5) 让 git 以 stateless-rpc 处理请求 → 因为我们声明了 thin-pack 且有 have，
+        //    服务器只回 v2 的新对象，且新 blob 以 ref-delta 挂在客户端已有的 v1 旧 blob 上
+        let mut child = Command::new("git")
+            .args(["upload-pack", "--stateless-rpc"]).arg(&src)
+            .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
+            .spawn().unwrap();
+        { child.stdin.take().unwrap().write_all(&want).unwrap(); }
+        let resp = child.wait_with_output().unwrap().stdout;
+        let mut cur: &[u8] = &resp;
+        let pack = read_pack_response(&mut cur).unwrap();
+
+        // 6) 证明这确实是 thin-pack：普通 parser 解不开（外部基不在包内），
+        //    thin parser 借客户端对象库才能增厚成功
+        let client_git = client.join(".git");
+        assert!(parse_pack(&pack).is_err(),
+                "增量响应应是 thin-pack：普通 parse_pack 应因外部基对象失败");
+        let objects = parse_pack_thin(&pack, &client_git)
+            .expect("parse_pack_thin 应借本地对象库增厚成功");
+
+        // 7) 增厚出来的每个对象都应与源仓库逐字节一致；且应包含 v2 这个新 commit
+        let mut got_v2 = false;
+        for o in &objects {
+            if o.hex() == v2 { got_v2 = true; }
+            let raw = Command::new("git").arg("-C").arg(&src)
+                .args(["cat-file", o.kind.name(), &o.hex()]).output().unwrap().stdout;
+            assert_eq!(o.data, raw, "增厚后的对象 {} 内容应与源一致", o.hex());
+        }
+        assert!(got_v2, "增量 pack 应包含新提交 v2");
+        // 增量应只带“新”对象，不应把客户端已有的 v1 commit 再发一遍
+        assert!(!objects.iter().any(|o| o.hex() == v1), "增量 pack 不应重复发送已有的 v1");
+
+        let _ = std::fs::remove_dir_all(&src);
+        let _ = std::fs::remove_dir_all(&client);
     }
 }
