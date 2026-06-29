@@ -66,24 +66,33 @@ impl LlmClient {
     pub fn chat(&self, messages: &[Message]) -> Result<String> {
         let url = self.completions_url();
         let auth = format!("Bearer {}", self.api_key);
-        let body = ChatRequest { model: &self.model, messages };
-
-        let resp = ureq::post(&url)
-            .timeout(REQUEST_TIMEOUT)
-            .set("Authorization", &auth)
-            .send_json(&body);
-
-        let resp = match resp {
-            Ok(r) => r,
-            // 非 2xx：把状态码 + 响应体一起报出来，便于排查 401 / 余额不足 / 模型名错等
-            Err(ureq::Error::Status(code, r)) => {
-                let detail = r.into_string().unwrap_or_default();
-                bail!("LLM 接口返回 HTTP {code}：{detail}");
-            }
-            Err(e) => return Err(e).context(format!("POST {url} 失败")),
+        let body = ChatRequest {
+            model: &self.model,
+            messages,
         };
 
-        let text = resp.into_string().context("读取 LLM 响应体")?;
+        let agent = ureq::Agent::config_builder()
+            .timeout_global(Some(REQUEST_TIMEOUT))
+            .http_status_as_error(false)
+            .build()
+            .new_agent();
+
+        let mut resp = agent
+            .post(&url)
+            .header("Authorization", &auth)
+            .send_json(&body)
+            .context(format!("POST {url} 失败"))?;
+
+        let status = resp.status();
+        let text = resp
+            .body_mut()
+            .read_to_string()
+            .context("读取 LLM 响应体")?;
+
+        if !status.is_success() {
+            bail!("LLM 接口返回 HTTP {}：{}", status.as_u16(), text);
+        }
+
         parse_reply(&text)
     }
 }
