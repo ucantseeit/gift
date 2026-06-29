@@ -7,7 +7,12 @@ use crate::{init,
     commit_identity::identities_from_git_env,
     reference::branch,
     checkout::{CheckoutTarget, checkout},
+    get_packfile_by_network::ls_remote,
+    parse_packfile::{clone, dir_name_from_url},
+    fetch::fetch,
     merge::{merge, MergeOutcome},
+    pull::pull,
+    push::push,
 };
 use anyhow::Ok;
 use clap::{Parser, Subcommand};
@@ -44,6 +49,46 @@ enum GiftCommand {
     },
 
     Status,
+
+    LsRemote{
+        url: String
+    },
+
+    Clone{
+        url: String
+    },
+
+    //从远端拉取对象并更新远程跟踪引用 refs/remotes/<remote>/*；
+    //不动 HEAD / 本地分支 / 工作区。remote 默认 "origin"。
+    Fetch{
+        url: String,
+        #[arg(default_value = "origin")]
+        remote: String
+    },
+
+    /// fetch + merge：从远端拉取后，把对应的远程分支并入当前分支。
+    /// `branch` 省略时取当前分支同名（`-b` 指定其它分支）。
+    Pull{
+        url: String,
+        #[arg(default_value = "origin")]
+        remote: String,
+        #[arg(short = 'b', long = "branch")]
+        branch: Option<String>,
+        #[arg(short = 'm')]
+        message: Option<String>,
+    },
+
+    /// 把本地分支推到远端同名分支。`branch` 省略时取当前分支；`-f` 强推（跳过快进检查）。
+    Push{
+        url: String,
+        #[arg(default_value = "origin")]
+        remote: String,
+        #[arg(short = 'b', long = "branch")]
+        branch: Option<String>,
+        #[arg(short = 'f', long = "force")]
+        force: bool,
+    }
+
 }
 
 #[derive(Parser, Debug)]
@@ -120,20 +165,8 @@ pub fn get_args_and_go() -> Result<(), anyhow::Error>  {
                     format!("Merge branch '{}'\n", target)
                 }
             });
-            match merge(&abs_path.worktree, &abs_path.git_abs, &target, author, committer, &msg)? {
-                MergeOutcome::AlreadyUpToDate => println!("Already up to date."),
-                MergeOutcome::FastForward(oid) => println!("Fast-forward\n  HEAD -> {}", oid.to_string()),
-                MergeOutcome::Clean(oid) => {
-                    println!("Merge made by 'resolve' strategy.\n  {}", oid.to_string());
-                }
-                MergeOutcome::Conflict(paths) => {
-                    eprintln!("CONFLICT: automatic merge failed; fix conflicts and then commit.");
-                    for p in &paths {
-                        eprintln!("  conflict: {}", p.display());
-                    }
-                    std::process::exit(1);
-                }
-            }
+            let outcome = merge(&abs_path.worktree, &abs_path.git_abs, &target, author, committer, &msg)?;
+            report_merge_outcome(&outcome);
             Ok(())
         }
 
@@ -148,7 +181,59 @@ pub fn get_args_and_go() -> Result<(), anyhow::Error>  {
             checkout(&abs_path.worktree, &abs_path.git_abs, target)?;
             Ok(())
         },
-        GiftCommand::Status => { println!("Status"); Ok(()) }
+        GiftCommand::Status => {println!("Status"); Ok(())},
+        GiftCommand::LsRemote { url } =>{
+            ls_remote(&url)?;
+            Ok(())
+        },
+        GiftCommand::Clone { url }=>{
+            let dir = dir_name_from_url(&url)?;
+            println!("Cloning into '{dir}'...");
+            clone(&url, &dir)?;
+            Ok(())
+        },
+        GiftCommand::Fetch { url, remote }=>{
+            let abs_path = discover_repo_from_cwd()?;
+            fetch(&abs_path.git_abs, &url, &remote)?;
+            Ok(())
+        }
+        GiftCommand::Pull { url, remote, branch, message }=>{
+            let abs_path = discover_repo_from_cwd()?;
+            let (author, committer) = identities_from_git_env()?;
+            let outcome = pull(
+                &abs_path.worktree,
+                &abs_path.git_abs,
+                &url,
+                &remote,
+                branch.as_deref(),
+                author,
+                committer,
+                message,
+            )?;
+            report_merge_outcome(&outcome);
+            Ok(())
+        }
+        GiftCommand::Push { url, remote, branch, force }=>{
+            let abs_path = discover_repo_from_cwd()?;
+            push(&abs_path.worktree, &abs_path.git_abs, &url, &remote, branch.as_deref(), force)?;
+            Ok(())
+        }
 
+    }
+}
+
+/// 打印 merge / pull 的结果；冲突时打印冲突文件并以非零码退出（与 git 一致）。
+fn report_merge_outcome(outcome: &MergeOutcome) {
+    match outcome {
+        MergeOutcome::AlreadyUpToDate => println!("Already up to date."),
+        MergeOutcome::FastForward(oid) => println!("Fast-forward\n  HEAD -> {}", oid.to_string()),
+        MergeOutcome::Clean(oid) => println!("Merge made by 'resolve' strategy.\n  {}", oid.to_string()),
+        MergeOutcome::Conflict(paths) => {
+            eprintln!("CONFLICT: automatic merge failed; fix conflicts and then commit.");
+            for p in paths {
+                eprintln!("  conflict: {}", p.display());
+            }
+            std::process::exit(1);
+        }
     }
 }
