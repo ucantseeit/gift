@@ -69,6 +69,51 @@ pub fn status(worktree: &Path, git_abs: &Path) -> Result<Status> {
     })
 }
 
+/// 打印 status 命令的结果。
+pub fn print_status(repo_status: &Status) {
+    if repo_status.staged.is_empty()
+        && repo_status.unstaged.is_empty()
+        && repo_status.untracked.is_empty()
+    {
+        println!("nothing to commit, working tree clean");
+        return;
+    }
+
+    print_status_section("Changes to be committed:", &repo_status.staged);
+    print_status_section("Changes not staged for commit:", &repo_status.unstaged);
+
+    if !repo_status.untracked.is_empty() {
+        println!("Untracked files:");
+        for path in &repo_status.untracked {
+            println!("  {}", path.display());
+        }
+        println!();
+    }
+}
+
+/// 打印一组带变更类型的 status 条目。
+fn print_status_section(title: &str, entries: &[StatusEntry]) {
+    if entries.is_empty() {
+        return;
+    }
+
+    println!("{}", title);
+    for entry in entries {
+        println!("  {}: {}", change_type_label(&entry.change_type), entry.path.display());
+    }
+    println!();
+}
+
+/// 返回 status 变更类型对应的命令行展示文本。
+fn change_type_label(change_type: &ChangeType) -> &'static str {
+    match change_type {
+        ChangeType::NewFile => "new file",
+        ChangeType::Modified => "modified",
+        ChangeType::Deleted => "deleted",
+        ChangeType::Conflicted => "conflicted",
+    }
+}
+
 /// 扫描工作区，检测未暂存改动和未追踪文件
 fn scan_worktree(
     worktree: &Path,
