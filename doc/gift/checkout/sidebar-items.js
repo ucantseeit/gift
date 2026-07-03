@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["CheckoutTarget"],"fn":["checkout","checkout_branch","checkout_commit"]};

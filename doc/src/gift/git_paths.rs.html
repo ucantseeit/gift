@@ -1,0 +1,120 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/git_paths.rs`."><title>git_paths.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="gift" data-themes="" data-resource-suffix="" data-rustdoc-version="1.93.0 (254b59607 2026-01-19)" data-channel="1.93.0" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-a3946164.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-a410ff4d.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">gift/</div>git_paths.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="doccomment">//! 一些与git仓库路径相关的辅助函数
+<a href=#2 id=2 data-nosnippet>2</a>//! 约定: worktree是工作文件夹的绝对路径
+<a href=#3 id=3 data-nosnippet>3</a>//! git_abs是git仓库的绝对路径
+<a href=#4 id=4 data-nosnippet>4</a>
+<a href=#5 id=5 data-nosnippet>5</a></span><span class="kw">use </span>anyhow::{Context, <span class="prelude-val">Ok</span>, <span class="prelude-ty">Result</span>, bail};
+<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>std::{fs, path::{Path, PathBuf}};
+<a href=#7 id=7 data-nosnippet>7</a>
+<a href=#8 id=8 data-nosnippet>8</a><span class="doccomment">/// 将绝对路径转为相对 git_abs 的路径（如 `refs/heads/main`）
+<a href=#9 id=9 data-nosnippet>9</a></span><span class="kw">pub fn </span>abs_path_to_git_path(
+<a href=#10 id=10 data-nosnippet>10</a>    worktree: <span class="kw-2">&amp;</span>Path,
+<a href=#11 id=11 data-nosnippet>11</a>    git_abs: <span class="kw-2">&amp;</span>Path,
+<a href=#12 id=12 data-nosnippet>12</a>    path: <span class="kw-2">&amp;</span>Path,
+<a href=#13 id=13 data-nosnippet>13</a>) -&gt; <span class="prelude-ty">Result</span>&lt;String&gt; {
+<a href=#14 id=14 data-nosnippet>14</a>    <span class="kw">let </span>abs = worktree.join(path);
+<a href=#15 id=15 data-nosnippet>15</a>    <span class="kw">let </span>rel = abs.strip_prefix(<span class="kw-2">&amp;</span>git_abs).with_context(|| {
+<a href=#16 id=16 data-nosnippet>16</a>        <span class="macro">format!</span>(
+<a href=#17 id=17 data-nosnippet>17</a>            <span class="string">"git path {} not under git dir {}"</span>,
+<a href=#18 id=18 data-nosnippet>18</a>            path.display(),
+<a href=#19 id=19 data-nosnippet>19</a>            git_abs.display()
+<a href=#20 id=20 data-nosnippet>20</a>        )
+<a href=#21 id=21 data-nosnippet>21</a>    })<span class="question-mark">?</span>;
+<a href=#22 id=22 data-nosnippet>22</a>    <span class="kw">let </span>s = rel.to_string_lossy().replace(<span class="string">'\\'</span>, <span class="string">"/"</span>);
+<a href=#23 id=23 data-nosnippet>23</a>    <span class="kw">let </span>s = s.trim_start_matches(<span class="string">'/'</span>).to_string();
+<a href=#24 id=24 data-nosnippet>24</a>    <span class="kw">if </span>s.is_empty() {
+<a href=#25 id=25 data-nosnippet>25</a>        <span class="macro">bail!</span>(<span class="string">"empty ref name from {}"</span>, path.display());
+<a href=#26 id=26 data-nosnippet>26</a>    }
+<a href=#27 id=27 data-nosnippet>27</a>    <span class="prelude-val">Ok</span>(s)
+<a href=#28 id=28 data-nosnippet>28</a>}
+<a href=#29 id=29 data-nosnippet>29</a>
+<a href=#30 id=30 data-nosnippet>30</a><span class="doccomment">/// 输入: branch_name
+<a href=#31 id=31 data-nosnippet>31</a>/// 输出: 其对应 ref 文件的相对 git 仓库的路径
+<a href=#32 id=32 data-nosnippet>32</a></span><span class="kw">pub fn </span>get_branch_ref_path(
+<a href=#33 id=33 data-nosnippet>33</a>    branch_name: <span class="kw-2">&amp;</span>str
+<a href=#34 id=34 data-nosnippet>34</a>) -&gt; PathBuf {
+<a href=#35 id=35 data-nosnippet>35</a>    PathBuf::new()
+<a href=#36 id=36 data-nosnippet>36</a>        .join(<span class="string">"refs"</span>)
+<a href=#37 id=37 data-nosnippet>37</a>        .join(<span class="string">"heads"</span>)
+<a href=#38 id=38 data-nosnippet>38</a>        .join(branch_name)
+<a href=#39 id=39 data-nosnippet>39</a>}
+<a href=#40 id=40 data-nosnippet>40</a>
+<a href=#41 id=41 data-nosnippet>41</a><span class="doccomment">/// loose 对象文件路径：`…/objects/ab/cdef…`（`hex_oid` 为完整 hex，不含换行）
+<a href=#42 id=42 data-nosnippet>42</a></span><span class="kw">pub fn </span>loose_object_path(
+<a href=#43 id=43 data-nosnippet>43</a>    git_abs: <span class="kw-2">&amp;</span>Path, 
+<a href=#44 id=44 data-nosnippet>44</a>    hex_oid: <span class="kw-2">&amp;</span>str
+<a href=#45 id=45 data-nosnippet>45</a>) -&gt; PathBuf {
+<a href=#46 id=46 data-nosnippet>46</a>    <span class="macro">debug_assert!</span>(
+<a href=#47 id=47 data-nosnippet>47</a>        hex_oid.len() &gt;= <span class="number">3</span>,
+<a href=#48 id=48 data-nosnippet>48</a>        <span class="string">"hex_oid must be long enough for objects/xx/yy… layout"
+<a href=#49 id=49 data-nosnippet>49</a>    </span>);
+<a href=#50 id=50 data-nosnippet>50</a>    git_abs
+<a href=#51 id=51 data-nosnippet>51</a>        .join(<span class="string">"objects"</span>)
+<a href=#52 id=52 data-nosnippet>52</a>        .join(<span class="kw-2">&amp;</span>hex_oid[<span class="number">0</span>..<span class="number">2</span>])
+<a href=#53 id=53 data-nosnippet>53</a>        .join(<span class="kw-2">&amp;</span>hex_oid[<span class="number">2</span>..])
+<a href=#54 id=54 data-nosnippet>54</a>}
+<a href=#55 id=55 data-nosnippet>55</a>
+<a href=#56 id=56 data-nosnippet>56</a><span class="attr">#[derive(Debug, Clone)]
+<a href=#57 id=57 data-nosnippet>57</a></span><span class="kw">pub struct </span>RepoPaths {
+<a href=#58 id=58 data-nosnippet>58</a>    <span class="kw">pub </span>worktree: PathBuf,
+<a href=#59 id=59 data-nosnippet>59</a>    <span class="kw">pub </span>git_abs: PathBuf,
+<a href=#60 id=60 data-nosnippet>60</a>}
+<a href=#61 id=61 data-nosnippet>61</a>
+<a href=#62 id=62 data-nosnippet>62</a><span class="doccomment">///向上找到当前目录的.gift文件夹和worktree的相对路径
+<a href=#63 id=63 data-nosnippet>63</a></span><span class="kw">pub fn </span>discover_repo_from_cwd() -&gt; <span class="prelude-ty">Result</span>&lt;RepoPaths&gt;{
+<a href=#64 id=64 data-nosnippet>64</a>    <span class="comment">//返回当前工作目录的绝对路径
+<a href=#65 id=65 data-nosnippet>65</a>    </span><span class="kw">let </span>cwd = std::env::current_dir()<span class="question-mark">?</span>;
+<a href=#66 id=66 data-nosnippet>66</a>    <span class="kw">let </span><span class="kw-2">mut </span>cur = fs::canonicalize(<span class="kw-2">&amp;</span>cwd)<span class="question-mark">?</span>;
+<a href=#67 id=67 data-nosnippet>67</a>    <span class="kw">loop</span>{
+<a href=#68 id=68 data-nosnippet>68</a>        <span class="kw">let </span>gift_path = cur.join(<span class="string">".gift"</span>);
+<a href=#69 id=69 data-nosnippet>69</a>        <span class="kw">if </span>gift_path.is_dir(){
+<a href=#70 id=70 data-nosnippet>70</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(RepoPaths{
+<a href=#71 id=71 data-nosnippet>71</a>                worktree:cur,
+<a href=#72 id=72 data-nosnippet>72</a>                git_abs: gift_path,
+<a href=#73 id=73 data-nosnippet>73</a>            });
+<a href=#74 id=74 data-nosnippet>74</a>        }
+<a href=#75 id=75 data-nosnippet>75</a>        <span class="kw">match </span>cur.parent() {
+<a href=#76 id=76 data-nosnippet>76</a>            <span class="prelude-val">Some</span>(parent) =&gt; cur = parent.to_path_buf(),
+<a href=#77 id=77 data-nosnippet>77</a>            <span class="prelude-val">None </span>=&gt; <span class="kw">break</span>,
+<a href=#78 id=78 data-nosnippet>78</a>        }
+<a href=#79 id=79 data-nosnippet>79</a>    }
+<a href=#80 id=80 data-nosnippet>80</a>    <span class="macro">bail!</span>(<span class="string">"not a gift repository (or any parent): {}"</span>, cwd.display());
+<a href=#81 id=81 data-nosnippet>81</a>}
+<a href=#82 id=82 data-nosnippet>82</a>
+<a href=#83 id=83 data-nosnippet>83</a><span class="doccomment">/// 向上搜索 giftai 对话仓库（`.giftai`），返回解耦布局下的 `RepoPaths`。
+<a href=#84 id=84 data-nosnippet>84</a>///
+<a href=#85 id=85 data-nosnippet>85</a>/// 与 [`discover_repo_from_cwd`] 的区别在于 worktree 的位置：
+<a href=#86 id=86 data-nosnippet>86</a>/// - `git_abs` = 找到的 `.giftai` 目录本身（对话元数据：objects/ refs/ HEAD …）；
+<a href=#87 id=87 data-nosnippet>87</a>/// - `worktree` = `.giftai` 的**兄弟目录** `&lt;root&gt;/chat`（仅存放消息文件）。
+<a href=#88 id=88 data-nosnippet>88</a>///
+<a href=#89 id=89 data-nosnippet>89</a>/// 这样 `.giftai` 放在项目根、对话内容隔离在 `chat/`，二者互不包含，
+<a href=#90 id=90 data-nosnippet>90</a>/// `giftai` 命令可在项目根或任意子目录直接运行。
+<a href=#91 id=91 data-nosnippet>91</a>///
+<a href=#92 id=92 data-nosnippet>92</a>/// 注意：本函数只负责定位，不保证 `chat/` 已存在（由 `giftai init` 创建）。
+<a href=#93 id=93 data-nosnippet>93</a></span><span class="kw">pub fn </span>discover_chat_repo() -&gt; <span class="prelude-ty">Result</span>&lt;RepoPaths&gt; {
+<a href=#94 id=94 data-nosnippet>94</a>    <span class="kw">let </span>cwd = std::env::current_dir()<span class="question-mark">?</span>;
+<a href=#95 id=95 data-nosnippet>95</a>    <span class="kw">let </span><span class="kw-2">mut </span>cur = fs::canonicalize(<span class="kw-2">&amp;</span>cwd)<span class="question-mark">?</span>;
+<a href=#96 id=96 data-nosnippet>96</a>    <span class="kw">loop </span>{
+<a href=#97 id=97 data-nosnippet>97</a>        <span class="kw">let </span>giftai_path = cur.join(<span class="string">".giftai"</span>);
+<a href=#98 id=98 data-nosnippet>98</a>        <span class="kw">if </span>giftai_path.is_dir() {
+<a href=#99 id=99 data-nosnippet>99</a>            <span class="kw">let </span>root = giftai_path
+<a href=#100 id=100 data-nosnippet>100</a>                .parent()
+<a href=#101 id=101 data-nosnippet>101</a>                .with_context(|| {
+<a href=#102 id=102 data-nosnippet>102</a>                    <span class="macro">format!</span>(<span class="string">"`.giftai` has no parent: {}"</span>, giftai_path.display())
+<a href=#103 id=103 data-nosnippet>103</a>                })<span class="question-mark">?
+<a href=#104 id=104 data-nosnippet>104</a>                </span>.to_path_buf();
+<a href=#105 id=105 data-nosnippet>105</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(RepoPaths {
+<a href=#106 id=106 data-nosnippet>106</a>                worktree: root.join(<span class="string">"chat"</span>),
+<a href=#107 id=107 data-nosnippet>107</a>                git_abs: giftai_path,
+<a href=#108 id=108 data-nosnippet>108</a>            });
+<a href=#109 id=109 data-nosnippet>109</a>        }
+<a href=#110 id=110 data-nosnippet>110</a>        <span class="kw">match </span>cur.parent() {
+<a href=#111 id=111 data-nosnippet>111</a>            <span class="prelude-val">Some</span>(parent) =&gt; cur = parent.to_path_buf(),
+<a href=#112 id=112 data-nosnippet>112</a>            <span class="prelude-val">None </span>=&gt; <span class="kw">break</span>,
+<a href=#113 id=113 data-nosnippet>113</a>        }
+<a href=#114 id=114 data-nosnippet>114</a>    }
+<a href=#115 id=115 data-nosnippet>115</a>    <span class="macro">bail!</span>(<span class="string">"not a giftai repository (or any parent): {}"</span>, cwd.display());
+<a href=#116 id=116 data-nosnippet>116</a>}
+<a href=#117 id=117 data-nosnippet>117</a>
+<a href=#118 id=118 data-nosnippet>118</a>
+<a href=#119 id=119 data-nosnippet>119</a>
+</code></pre></div></section></main></body></html>

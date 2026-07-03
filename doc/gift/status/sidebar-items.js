@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ChangeType"],"fn":["load_head_tree","print_status","status"],"struct":["HeadTree","Status","StatusEntry"]};

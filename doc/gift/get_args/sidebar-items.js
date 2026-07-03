@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["GiftCommand"],"fn":["get_args_and_go"]};

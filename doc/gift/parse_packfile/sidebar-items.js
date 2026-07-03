@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["META_DIR"],"enum":["Kind"],"fn":["build_pack","clone","clone_to_disk","dir_name_from_url","hex","parse_pack","parse_pack_thin","read_loose_object_by_hex","write_loose_object"],"struct":["PackedObject"]};

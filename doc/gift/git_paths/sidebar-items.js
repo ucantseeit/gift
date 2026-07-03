@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["abs_path_to_git_path","discover_chat_repo","discover_repo_from_cwd","get_branch_ref_path","loose_object_path"],"struct":["RepoPaths"]};

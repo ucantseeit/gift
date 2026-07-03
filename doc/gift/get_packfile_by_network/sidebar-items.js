@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["discover_refs","discover_refs_for","fetch_pack","ls_remote","parse_advertisement"],"struct":["Ref","RefAdvertisement"]};

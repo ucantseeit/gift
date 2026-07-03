@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["FileMode","Object","ObjectSha"],"fn":["commit_tree","hash_object","write_hash_object"],"struct":["BlobObject","CommitIdentity","CommitObject","TreeEntry","TreeObject"]};

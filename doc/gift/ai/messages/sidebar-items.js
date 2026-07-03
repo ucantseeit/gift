@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Role"],"fn":["load_messages","message_filename","next_seq","select_rounds"],"struct":["Message"]};

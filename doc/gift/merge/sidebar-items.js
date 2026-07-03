@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["MergeEntry","MergeOutcome"],"fn":["merge","merge_apply","merge_trees"]};

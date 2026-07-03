@@ -1,0 +1,210 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/staging.rs`."><title>staging.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="gift" data-themes="" data-resource-suffix="" data-rustdoc-version="1.93.0 (254b59607 2026-01-19)" data-channel="1.93.0" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-a3946164.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-a410ff4d.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">gift/</div>staging.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="doccomment">//! 工作区文件暂存（类似 `git add`）：写入 loose objects 并更新 index。
+<a href=#2 id=2 data-nosnippet>2</a>
+<a href=#3 id=3 data-nosnippet>3</a></span><span class="kw">use </span><span class="kw">crate</span>::index::{index_file::{<span class="self">self</span>, IndexFile}};
+<a href=#4 id=4 data-nosnippet>4</a><span class="kw">use </span><span class="kw">crate</span>::object::{<span class="self">self</span>};
+<a href=#5 id=5 data-nosnippet>5</a>
+<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>, bail};
+<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>std::collections::BTreeSet;
+<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>std::fs;
+<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>std::path::{Path, PathBuf};
+<a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span><span class="kw">crate</span>::ignore;
+<a href=#11 id=11 data-nosnippet>11</a>
+<a href=#12 id=12 data-nosnippet>12</a><span class="doccomment">/// 将若干工作区路径暂存：对每个叶子对象计算 blob、写入 `git_abs/objects`，再更新 `git_abs/index`。
+<a href=#13 id=13 data-nosnippet>13</a>///
+<a href=#14 id=14 data-nosnippet>14</a>/// # 参数
+<a href=#15 id=15 data-nosnippet>15</a>///
+<a href=#16 id=16 data-nosnippet>16</a>/// - **`git_abs`**：Git 目录（内含 `objects/`、`index`），可为 `.git`、`.gift` 等。
+<a href=#17 id=17 data-nosnippet>17</a>/// - **`worktree`**：工作区根目录；index 中的路径为其相对路径（经 [`index::index_path_bytes`]）。
+<a href=#18 id=18 data-nosnippet>18</a>/// - **`inputs`**：待暂存路径列表。
+<a href=#19 id=19 data-nosnippet>19</a>/// - **`recursive_dirs`**：为 `true` 时递归展开目录内的文件与符号链接；为 `false` 时若某条路径为目录则返回错误。
+<a href=#20 id=20 data-nosnippet>20</a>///
+<a href=#21 id=21 data-nosnippet>21</a>/// # 契约（调用方负责保证）
+<a href=#22 id=22 data-nosnippet>22</a>/// - `git_abs`、`worktree`、`inputs` 中每条路径均为已 `canonicalize` 的绝对路径。
+<a href=#23 id=23 data-nosnippet>23</a>/// - 每条 input 均落在 `worktree` 下且不在 `git_abs` 下。
+<a href=#24 id=24 data-nosnippet>24</a>/// - 如需从用户原始输入（相对路径、未验证）构造上述路径，请先调用 [`resolve_stage_inputs`]。
+<a href=#25 id=25 data-nosnippet>25</a>///
+<a href=#26 id=26 data-nosnippet>26</a>/// # 说明
+<a href=#27 id=27 data-nosnippet>27</a>/// - 不会遍历进入 `git_abs` 内部；叶子若落在 `git_abs` 下会报错。
+<a href=#28 id=28 data-nosnippet>28</a>/// - 暂未实现 `.gitignore`。
+<a href=#29 id=29 data-nosnippet>29</a>/// - 暂未实现同步删除工作区文件的操作。
+<a href=#30 id=30 data-nosnippet>30</a></span><span class="kw">pub fn </span>stage_paths(
+<a href=#31 id=31 data-nosnippet>31</a>    git_abs: <span class="kw-2">&amp;</span>Path,
+<a href=#32 id=32 data-nosnippet>32</a>    worktree: <span class="kw-2">&amp;</span>Path,
+<a href=#33 id=33 data-nosnippet>33</a>    inputs: <span class="kw-2">&amp;</span>[PathBuf],
+<a href=#34 id=34 data-nosnippet>34</a>    recursive_dirs: bool,
+<a href=#35 id=35 data-nosnippet>35</a>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#36 id=36 data-nosnippet>36</a>    <span class="kw">if </span>inputs.is_empty() {
+<a href=#37 id=37 data-nosnippet>37</a>        <span class="macro">bail!</span>(<span class="string">"no paths to stage"</span>);
+<a href=#38 id=38 data-nosnippet>38</a>    }
+<a href=#39 id=39 data-nosnippet>39</a>
+<a href=#40 id=40 data-nosnippet>40</a>    <span class="comment">// 加载.gitignore规则
+<a href=#41 id=41 data-nosnippet>41</a>    </span><span class="kw">let </span>ignore_rules = ignore::IgnoreRules::load(worktree)
+<a href=#42 id=42 data-nosnippet>42</a>        .context(<span class="string">"load .gitignore"</span>)<span class="question-mark">?</span>;
+<a href=#43 id=43 data-nosnippet>43</a>
+<a href=#44 id=44 data-nosnippet>44</a>    <span class="comment">// 收集所有的"叶子文件"
+<a href=#45 id=45 data-nosnippet>45</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>leaves = BTreeSet::&lt;PathBuf&gt;::new();
+<a href=#46 id=46 data-nosnippet>46</a>    <span class="kw">for </span>root <span class="kw">in </span>inputs {
+<a href=#47 id=47 data-nosnippet>47</a>        collect_leaves(root, git_abs, recursive_dirs, <span class="kw-2">&amp;mut </span>leaves)<span class="question-mark">?</span>;
+<a href=#48 id=48 data-nosnippet>48</a>    }
+<a href=#49 id=49 data-nosnippet>49</a>
+<a href=#50 id=50 data-nosnippet>50</a>    
+<a href=#51 id=51 data-nosnippet>51</a>    <span class="kw">let </span>index_path = git_abs.join(<span class="string">"index"</span>);
+<a href=#52 id=52 data-nosnippet>52</a>    <span class="kw">let </span><span class="kw-2">mut </span>index = <span class="kw">if </span>index_path.exists() {
+<a href=#53 id=53 data-nosnippet>53</a>        index_file::parse_index_file(<span class="kw-2">&amp;</span>index_path).with_context(|| {
+<a href=#54 id=54 data-nosnippet>54</a>            <span class="macro">format!</span>(<span class="string">"parse index {}"</span>, index_path.display())
+<a href=#55 id=55 data-nosnippet>55</a>        })<span class="question-mark">?
+<a href=#56 id=56 data-nosnippet>56</a>    </span>} <span class="kw">else </span>{
+<a href=#57 id=57 data-nosnippet>57</a>        IndexFile::empty(<span class="number">2</span>)
+<a href=#58 id=58 data-nosnippet>58</a>    };
+<a href=#59 id=59 data-nosnippet>59</a>
+<a href=#60 id=60 data-nosnippet>60</a>    <span class="kw">for </span>leaf <span class="kw">in </span><span class="kw-2">&amp;</span>leaves {
+<a href=#61 id=61 data-nosnippet>61</a>        ensure_not_inside_git_abs(leaf, <span class="kw-2">&amp;</span>git_abs)<span class="question-mark">?</span>;
+<a href=#62 id=62 data-nosnippet>62</a>
+<a href=#63 id=63 data-nosnippet>63</a>        <span class="kw">let </span>path_bytes = index_file::index_path_bytes(worktree, leaf)<span class="question-mark">?</span>;
+<a href=#64 id=64 data-nosnippet>64</a>        <span class="comment">// 使用 BTreeMap 的 contains_key 方法检查是否已追踪
+<a href=#65 id=65 data-nosnippet>65</a>        </span><span class="kw">let </span>is_tracked = index.get_entry(<span class="kw-2">&amp;</span>path_bytes).is_some();
+<a href=#66 id=66 data-nosnippet>66</a>        
+<a href=#67 id=67 data-nosnippet>67</a>        <span class="comment">// 核心逻辑：只有未追踪的文件才检查是否被忽略
+<a href=#68 id=68 data-nosnippet>68</a>        </span><span class="kw">let </span>ignored = !is_tracked &amp;&amp; ignore_rules.is_ignored(leaf);
+<a href=#69 id=69 data-nosnippet>69</a>        
+<a href=#70 id=70 data-nosnippet>70</a>        <span class="kw">if </span>ignored {
+<a href=#71 id=71 data-nosnippet>71</a>            <span class="kw">continue</span>;  <span class="comment">// 跳过被忽略且未追踪的文件
+<a href=#72 id=72 data-nosnippet>72</a>        </span>}
+<a href=#73 id=73 data-nosnippet>73</a>
+<a href=#74 id=74 data-nosnippet>74</a>        <span class="kw">let </span>(sha, blob_content) = object::hash_object(leaf)<span class="question-mark">?</span>;
+<a href=#75 id=75 data-nosnippet>75</a>        object::write_hash_object(<span class="kw-2">&amp;</span>git_abs, <span class="kw-2">&amp;</span>sha, <span class="kw-2">&amp;</span>blob_content)<span class="question-mark">?</span>;
+<a href=#76 id=76 data-nosnippet>76</a>
+<a href=#77 id=77 data-nosnippet>77</a>        <span class="kw">let </span>md = fs::symlink_metadata(leaf)<span class="question-mark">?</span>;
+<a href=#78 id=78 data-nosnippet>78</a>        <span class="comment">//let path_bytes = index_file::index_path_bytes(&amp;worktree, leaf)?;
+<a href=#79 id=79 data-nosnippet>79</a>        </span>index_file::add_index(
+<a href=#80 id=80 data-nosnippet>80</a>            <span class="kw-2">&amp;mut </span>index,
+<a href=#81 id=81 data-nosnippet>81</a>            <span class="kw-2">&amp;</span>md,
+<a href=#82 id=82 data-nosnippet>82</a>            path_bytes,
+<a href=#83 id=83 data-nosnippet>83</a>            sha,
+<a href=#84 id=84 data-nosnippet>84</a>        )
+<a href=#85 id=85 data-nosnippet>85</a>        .with_context(|| <span class="macro">format!</span>(<span class="string">"add_index {}"</span>, leaf.display()))<span class="question-mark">?</span>;
+<a href=#86 id=86 data-nosnippet>86</a>    }
+<a href=#87 id=87 data-nosnippet>87</a>
+<a href=#88 id=88 data-nosnippet>88</a>    index_file::write_index_file(<span class="kw-2">&amp;</span>index_path, <span class="kw-2">&amp;</span>index).with_context(|| {
+<a href=#89 id=89 data-nosnippet>89</a>        <span class="macro">format!</span>(<span class="string">"write_index_file {}"</span>, index_path.display())
+<a href=#90 id=90 data-nosnippet>90</a>    })<span class="question-mark">?</span>;
+<a href=#91 id=91 data-nosnippet>91</a>
+<a href=#92 id=92 data-nosnippet>92</a>    <span class="prelude-val">Ok</span>(())
+<a href=#93 id=93 data-nosnippet>93</a>}
+<a href=#94 id=94 data-nosnippet>94</a>
+<a href=#95 id=95 data-nosnippet>95</a><span class="doccomment">/// 将用户原始输入路径规范化为 [`stage_paths`] 所要求的 canon 绝对路径列表。
+<a href=#96 id=96 data-nosnippet>96</a>///
+<a href=#97 id=97 data-nosnippet>97</a>/// 相对路径相对于**进程当前工作目录**解析，然后 canonicalize，再校验落在 `worktree` 内且不在 `git_abs` 内。
+<a href=#98 id=98 data-nosnippet>98</a></span><span class="kw">pub fn </span>resolve_stage_inputs(
+<a href=#99 id=99 data-nosnippet>99</a>    inputs: <span class="kw-2">&amp;</span>[PathBuf],
+<a href=#100 id=100 data-nosnippet>100</a>    worktree: <span class="kw-2">&amp;</span>Path,
+<a href=#101 id=101 data-nosnippet>101</a>    git_abs: <span class="kw-2">&amp;</span>Path,
+<a href=#102 id=102 data-nosnippet>102</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;PathBuf&gt;&gt; {
+<a href=#103 id=103 data-nosnippet>103</a>    <span class="kw">let </span>cwd = std::env::current_dir()<span class="question-mark">?</span>;
+<a href=#104 id=104 data-nosnippet>104</a>    <span class="kw">let </span><span class="kw-2">mut </span>resolved = Vec::new();
+<a href=#105 id=105 data-nosnippet>105</a>    <span class="kw">for </span>input <span class="kw">in </span>inputs {
+<a href=#106 id=106 data-nosnippet>106</a>        <span class="kw">let </span>p = resolve_under_worktree(input, <span class="kw-2">&amp;</span>cwd, worktree)<span class="question-mark">?</span>;
+<a href=#107 id=107 data-nosnippet>107</a>        ensure_not_inside_git_abs(<span class="kw-2">&amp;</span>p, git_abs)<span class="question-mark">?</span>;
+<a href=#108 id=108 data-nosnippet>108</a>        resolved.push(p);
+<a href=#109 id=109 data-nosnippet>109</a>    }
+<a href=#110 id=110 data-nosnippet>110</a>    <span class="prelude-val">Ok</span>(resolved)
+<a href=#111 id=111 data-nosnippet>111</a>}
+<a href=#112 id=112 data-nosnippet>112</a>
+<a href=#113 id=113 data-nosnippet>113</a><span class="doccomment">/// 将用户输入路径解析为落在 `worktree_canon` 下的规范绝对路径。
+<a href=#114 id=114 data-nosnippet>114</a></span><span class="kw">fn </span>resolve_under_worktree(
+<a href=#115 id=115 data-nosnippet>115</a>    input: <span class="kw-2">&amp;</span>Path,
+<a href=#116 id=116 data-nosnippet>116</a>    cwd: <span class="kw-2">&amp;</span>Path,
+<a href=#117 id=117 data-nosnippet>117</a>    worktree_canon: <span class="kw-2">&amp;</span>Path,
+<a href=#118 id=118 data-nosnippet>118</a>) -&gt; <span class="prelude-ty">Result</span>&lt;PathBuf&gt; {
+<a href=#119 id=119 data-nosnippet>119</a>    <span class="kw">let </span>joined = <span class="kw">if </span>input.is_absolute() {
+<a href=#120 id=120 data-nosnippet>120</a>        input.to_path_buf()
+<a href=#121 id=121 data-nosnippet>121</a>    } <span class="kw">else </span>{
+<a href=#122 id=122 data-nosnippet>122</a>        cwd.join(input)
+<a href=#123 id=123 data-nosnippet>123</a>    };
+<a href=#124 id=124 data-nosnippet>124</a>    
+<a href=#125 id=125 data-nosnippet>125</a>    <span class="kw">let </span>canon =
+<a href=#126 id=126 data-nosnippet>126</a>        fs::canonicalize(<span class="kw-2">&amp;</span>joined).with_context(|| {
+<a href=#127 id=127 data-nosnippet>127</a>            <span class="macro">format!</span>(<span class="string">"canonicalize {}"</span>, joined.display())
+<a href=#128 id=128 data-nosnippet>128</a>        })<span class="question-mark">?</span>;
+<a href=#129 id=129 data-nosnippet>129</a>    canon.strip_prefix(worktree_canon).with_context(|| {
+<a href=#130 id=130 data-nosnippet>130</a>        <span class="macro">format!</span>(
+<a href=#131 id=131 data-nosnippet>131</a>            <span class="string">"{} is not under work tree {}"</span>,
+<a href=#132 id=132 data-nosnippet>132</a>            canon.display(),
+<a href=#133 id=133 data-nosnippet>133</a>            worktree_canon.display()
+<a href=#134 id=134 data-nosnippet>134</a>        )
+<a href=#135 id=135 data-nosnippet>135</a>    })<span class="question-mark">?</span>;
+<a href=#136 id=136 data-nosnippet>136</a>    <span class="prelude-val">Ok</span>(canon)
+<a href=#137 id=137 data-nosnippet>137</a>}
+<a href=#138 id=138 data-nosnippet>138</a>
+<a href=#139 id=139 data-nosnippet>139</a><span class="doccomment">/// 确保path不在git_abs以内
+<a href=#140 id=140 data-nosnippet>140</a></span><span class="kw">fn </span>ensure_not_inside_git_abs(path: <span class="kw-2">&amp;</span>Path, git_abs: <span class="kw-2">&amp;</span>Path) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#141 id=141 data-nosnippet>141</a>    <span class="kw">let </span>path = fs::canonicalize(path)<span class="question-mark">?</span>;
+<a href=#142 id=142 data-nosnippet>142</a>    <span class="kw">if </span>path.starts_with(git_abs) {
+<a href=#143 id=143 data-nosnippet>143</a>        <span class="macro">bail!</span>(
+<a href=#144 id=144 data-nosnippet>144</a>            <span class="string">"path {} lies inside git directory {}"</span>,
+<a href=#145 id=145 data-nosnippet>145</a>            path.display(),
+<a href=#146 id=146 data-nosnippet>146</a>            git_abs.display()
+<a href=#147 id=147 data-nosnippet>147</a>        );
+<a href=#148 id=148 data-nosnippet>148</a>    }
+<a href=#149 id=149 data-nosnippet>149</a>    <span class="prelude-val">Ok</span>(())
+<a href=#150 id=150 data-nosnippet>150</a>}
+<a href=#151 id=151 data-nosnippet>151</a>
+<a href=#152 id=152 data-nosnippet>152</a><span class="doccomment">/// 若为文件或符号链接则加入 `out`；若为目录则按需递归。
+<a href=#153 id=153 data-nosnippet>153</a></span><span class="kw">fn </span>collect_leaves(
+<a href=#154 id=154 data-nosnippet>154</a>    path: <span class="kw-2">&amp;</span>Path,
+<a href=#155 id=155 data-nosnippet>155</a>    git_abs: <span class="kw-2">&amp;</span>Path,
+<a href=#156 id=156 data-nosnippet>156</a>    recursive_dir: bool,
+<a href=#157 id=157 data-nosnippet>157</a>    out: <span class="kw-2">&amp;mut </span>BTreeSet&lt;PathBuf&gt;,
+<a href=#158 id=158 data-nosnippet>158</a>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#159 id=159 data-nosnippet>159</a>    <span class="kw">let </span>md = fs::symlink_metadata(path)
+<a href=#160 id=160 data-nosnippet>160</a>        .with_context(|| <span class="macro">format!</span>(<span class="string">"symlink_metadata {}"</span>, path.display()))<span class="question-mark">?</span>;
+<a href=#161 id=161 data-nosnippet>161</a>
+<a href=#162 id=162 data-nosnippet>162</a>    <span class="kw">if </span>md.file_type().is_symlink() || md.is_file() {
+<a href=#163 id=163 data-nosnippet>163</a>        out.insert(path.to_path_buf());
+<a href=#164 id=164 data-nosnippet>164</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+<a href=#165 id=165 data-nosnippet>165</a>    }
+<a href=#166 id=166 data-nosnippet>166</a>
+<a href=#167 id=167 data-nosnippet>167</a>    <span class="kw">if </span>md.is_dir() {
+<a href=#168 id=168 data-nosnippet>168</a>        <span class="kw">let </span>dir_canon =
+<a href=#169 id=169 data-nosnippet>169</a>            fs::canonicalize(path).with_context(|| <span class="macro">format!</span>(<span class="string">"canonicalize {}"</span>, path.display()))<span class="question-mark">?</span>;
+<a href=#170 id=170 data-nosnippet>170</a>        <span class="kw">if </span>dir_canon.starts_with(git_abs) {
+<a href=#171 id=171 data-nosnippet>171</a>            <span class="macro">bail!</span>(
+<a href=#172 id=172 data-nosnippet>172</a>                <span class="string">"directory {} is inside git metadata dir {}"</span>,
+<a href=#173 id=173 data-nosnippet>173</a>                path.display(),
+<a href=#174 id=174 data-nosnippet>174</a>                git_abs.display()
+<a href=#175 id=175 data-nosnippet>175</a>            );
+<a href=#176 id=176 data-nosnippet>176</a>        }
+<a href=#177 id=177 data-nosnippet>177</a>
+<a href=#178 id=178 data-nosnippet>178</a>        <span class="kw">if </span>!recursive_dir {
+<a href=#179 id=179 data-nosnippet>179</a>            <span class="macro">bail!</span>(
+<a href=#180 id=180 data-nosnippet>180</a>                <span class="string">"{} is a directory; pass recursive_dirs = true"</span>,
+<a href=#181 id=181 data-nosnippet>181</a>                path.display()
+<a href=#182 id=182 data-nosnippet>182</a>            );
+<a href=#183 id=183 data-nosnippet>183</a>        }
+<a href=#184 id=184 data-nosnippet>184</a>
+<a href=#185 id=185 data-nosnippet>185</a>        <span class="kw">for </span>entry <span class="kw">in </span>fs::read_dir(path).with_context(|| <span class="macro">format!</span>(<span class="string">"read_dir {}"</span>, path.display()))<span class="question-mark">?
+<a href=#186 id=186 data-nosnippet>186</a>        </span>{
+<a href=#187 id=187 data-nosnippet>187</a>            <span class="kw">let </span>entry = entry.with_context(|| <span class="macro">format!</span>(<span class="string">"read_dir entry {}"</span>, path.display()))<span class="question-mark">?</span>;
+<a href=#188 id=188 data-nosnippet>188</a>            <span class="kw">let </span>child_path = entry.path();
+<a href=#189 id=189 data-nosnippet>189</a>            <span class="kw">let </span>name = entry.file_name();
+<a href=#190 id=190 data-nosnippet>190</a>            <span class="kw">if </span>name == <span class="string">".git" </span>|| name == <span class="string">".gift" </span>{
+<a href=#191 id=191 data-nosnippet>191</a>                <span class="kw">continue</span>;
+<a href=#192 id=192 data-nosnippet>192</a>            }
+<a href=#193 id=193 data-nosnippet>193</a>
+<a href=#194 id=194 data-nosnippet>194</a>            <span class="kw">let </span>child_canon = fs::canonicalize(<span class="kw-2">&amp;</span>child_path).with_context(|| {
+<a href=#195 id=195 data-nosnippet>195</a>                <span class="macro">format!</span>(<span class="string">"canonicalize {}"</span>, child_path.display())
+<a href=#196 id=196 data-nosnippet>196</a>            })<span class="question-mark">?</span>;
+<a href=#197 id=197 data-nosnippet>197</a>            <span class="kw">if </span>child_canon.starts_with(git_abs) {
+<a href=#198 id=198 data-nosnippet>198</a>                <span class="kw">continue</span>;
+<a href=#199 id=199 data-nosnippet>199</a>            }
+<a href=#200 id=200 data-nosnippet>200</a>
+<a href=#201 id=201 data-nosnippet>201</a>            collect_leaves(<span class="kw-2">&amp;</span>child_path, git_abs, recursive_dir, out)<span class="question-mark">?</span>;
+<a href=#202 id=202 data-nosnippet>202</a>        }
+<a href=#203 id=203 data-nosnippet>203</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+<a href=#204 id=204 data-nosnippet>204</a>    }
+<a href=#205 id=205 data-nosnippet>205</a>
+<a href=#206 id=206 data-nosnippet>206</a>    <span class="macro">bail!</span>(<span class="string">"unsupported type at {}"</span>, path.display());
+<a href=#207 id=207 data-nosnippet>207</a>}
+<a href=#208 id=208 data-nosnippet>208</a>
+<a href=#209 id=209 data-nosnippet>209</a>
+</code></pre></div></section></main></body></html>

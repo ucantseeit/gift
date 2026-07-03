@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["init","run","run_ai"],"mod":["ai","checkout","commit","commit_identity","deal_pktlines","diff","fetch","get_args","get_packfile_by_network","git_paths","head","ignore","index","log","merge","merge_base","object","parse_packfile","pull","push","reference","staging","status","symbolic_ref"]};

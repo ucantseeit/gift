@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["identities_from_git_env"]};

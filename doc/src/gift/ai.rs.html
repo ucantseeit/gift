@@ -1,0 +1,18 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `src/ai.rs`."><title>ai.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="gift" data-themes="" data-resource-suffix="" data-rustdoc-version="1.93.0 (254b59607 2026-01-19)" data-channel="1.93.0" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-a3946164.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-a410ff4d.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">gift/</div>ai.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-2"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="doccomment">//! giftai：基于 git 机制的 AI 对话上下文管理器。
+<a href=#2 id=2 data-nosnippet>2</a>//!
+<a href=#3 id=3 data-nosnippet>3</a>//! 把「与 AI 的一轮问答」建模成一个 git commit：
+<a href=#4 id=4 data-nosnippet>4</a>//! - commit 的 parent = 选定的上文节点，沿 parent 链回溯即该轮完整上下文（commit DAG）；
+<a href=#5 id=5 data-nosnippet>5</a>//! - 问答内容以 blob/tree 存为**扁平快照**（每个 commit 的 tree 平铺到此为止的全部消息文件）；
+<a href=#6 id=6 data-nosnippet>6</a>//! - 上下文选择是「发送时过滤」：tree 永远是完整快照、parent 永远是 HEAD，
+<a href=#7 id=7 data-nosnippet>7</a>//!   `--select` 只影响这一轮实际发给模型的 messages，不改存储与血缘。
+<a href=#8 id=8 data-nosnippet>8</a>//!
+<a href=#9 id=9 data-nosnippet>9</a>//! 最大化复用现有 git 能力（[`crate::init`] / [`crate::staging`] / [`crate::commit`] /
+<a href=#10 id=10 data-nosnippet>10</a>//! [`crate::reference`] / [`crate::checkout`] / [`crate::log`] / [`crate::object`]），
+<a href=#11 id=11 data-nosnippet>11</a>//! 仅新增：`.giftai` 仓库发现、DeepSeek 客户端、messages 组装/选择、以及 CLI 编排。
+<a href=#12 id=12 data-nosnippet>12</a>
+<a href=#13 id=13 data-nosnippet>13</a></span><span class="kw">pub mod </span>cli;
+<a href=#14 id=14 data-nosnippet>14</a><span class="kw">pub mod </span>messages;
+<a href=#15 id=15 data-nosnippet>15</a><span class="kw">pub mod </span>llm;
+<a href=#16 id=16 data-nosnippet>16</a><span class="kw">pub mod </span>history;
+<a href=#17 id=17 data-nosnippet>17</a><span class="kw">pub mod </span>merge;
+</code></pre></div></section></main></body></html>

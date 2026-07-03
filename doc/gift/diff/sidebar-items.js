@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["BlobDiff","BlobSide","DiffEntry"],"fn":["diff_blobs","diff_commits","diff_dirs","diff_trees","subtree_at"],"struct":["FileContentDiff"]};

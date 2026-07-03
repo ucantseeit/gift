@@ -1,0 +1,2 @@
+createSrcSidebar('[["gift",["",[["ai",[],["cli.rs","history.rs","llm.rs","merge.rs","messages.rs"]],["index",[],["index_file.rs","index_tree.rs"]]],["ai.rs","checkout.rs","commit.rs","commit_identity.rs","deal_pktlines.rs","diff.rs","fetch.rs","get_args.rs","get_packfile_by_network.rs","git_paths.rs","head.rs","ignore.rs","index.rs","lib.rs","log.rs","merge.rs","merge_base.rs","object.rs","parse_packfile.rs","pull.rs","push.rs","reference.rs","staging.rs","status.rs","symbolic_ref.rs"]]],["giftai",["",[],["giftai.rs"]]]]');
+//{"start":19,"fragment_lengths":[473,33]}

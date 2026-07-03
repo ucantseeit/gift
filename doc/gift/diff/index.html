@@ -1,0 +1,43 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="diff 模块"><title>gift::diff - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="gift" data-themes="" data-resource-suffix="" data-rustdoc-version="1.93.0 (254b59607 2026-01-19)" data-channel="1.93.0" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-a3946164.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-a410ff4d.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module diff</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../gift/index.html">gift</a><span class="version">0.1.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module diff</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#diff-模块" title="diff 模块">diff 模块</a><ul><li><a href="#当前设计范围与取舍" title="当前设计范围与取舍">当前设计范围与取舍</a></li><li><a href="#blobsideblob-内容来源抽象" title="BlobSide：blob 内容来源抽象">BlobSide：blob 内容来源抽象</a></li><li><a href="#未来扩展方向" title="未来扩展方向">未来扩展方向</a></li></ul></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#functions" title="Functions">Functions</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate gift</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../index.html">gift</a></div><h1>Module <span>diff</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/gift/diff.rs.html#1-310">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><h2 id="diff-模块"><a class="doc-anchor" href="#diff-模块">§</a>diff 模块</h2><h3 id="当前设计范围与取舍"><a class="doc-anchor" href="#当前设计范围与取舍">§</a>当前设计范围与取舍</h3>
+<p>本模块目前只处理<strong>两侧都已在 object 数据库中</strong>的场景：</p>
+<ul>
+<li><code>diff_trees</code> / <code>diff_dirs</code>：两棵 <code>TreeObject</code> 均来自 <code>.git/objects</code></li>
+<li><code>diff_commits</code>：两个 commit 的 tree 均来自 <code>.git/objects</code></li>
+<li><code>Added</code>/<code>Deleted</code> 的对端以 <code>BlobSide::Empty</code>（空内容）表示</li>
+</ul>
+<p>树级结构 diff（<code>diff_trees</code>）只比较 OID 和 FileMode，<strong>不读取 blob 内容</strong>；
+内容级 diff（<code>diff_dirs</code> 及以上）才通过 <code>BlobSide</code> 读取字节并调用 diffy。</p>
+<h3 id="blobsideblob-内容来源抽象"><a class="doc-anchor" href="#blobsideblob-内容来源抽象">§</a>BlobSide：blob 内容来源抽象</h3>
+<p><code>BlobSide</code> 是唯一需要关心“从哪里读字节“的地方。目前有三个变体：</p>
+<ul>
+<li><code>Empty</code>：空内容（用于新增/删除文件的对端）</li>
+<li><code>Stored</code>：从 object 数据库读（当前唯一真正使用的场景）</li>
+<li><code>Worktree</code>：直接从磁盘文件读（<strong>暂未在上层函数中使用</strong>，为 <code>git diff</code>
+工作区 vs 暂存区/commit 预留；实现时在 <code>diff_dirs</code> 层引入对应的
+<code>TreeSide::Worktree</code> 变体，枚举磁盘目录条目即可）</li>
+</ul>
+<h3 id="未来扩展方向"><a class="doc-anchor" href="#未来扩展方向">§</a>未来扩展方向</h3>
+<ol>
+<li>
+<p><strong>工作区 diff</strong>（<code>git diff</code> 无参数）：
+需引入 <code>TreeSide { Stored(&amp;TreeObject), Worktree(&amp;Path) }</code>，
+<code>Worktree</code> 变体扫描磁盘目录、按需读文件字节（不需预写 object db）。
+blob 内容读取直接用 <code>BlobSide::Worktree</code>，已有路径。</p>
+</li>
+<li>
+<p><strong>暂存区 vs commit</strong>（<code>git diff --cached</code>）：
+index 中 blob OID 已写入 object db（<code>git add</code> 时写入），
+可直接复用 <code>BlobSide::Stored</code>；只需把 index 转成类 <code>TreeObject</code>
+的遍历接口即可接入现有 diff 栈。</p>
+</li>
+<li>
+<p><strong>重命名检测</strong>：在 <code>diff_trees</code> 返回的 <code>Deleted</code>+<code>Added</code> 对里
+做相似度匹配（blob 内容 edit-distance），目前未实现。</p>
+</li>
+</ol>
+</div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.FileContentDiff.html" title="struct gift::diff::FileContentDiff">File<wbr>Content<wbr>Diff</a></dt><dd><code>diff_trees</code> 的结果加上每个文件的内容 diff</dd></dl><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><dl class="item-table"><dt><a class="enum" href="enum.BlobDiff.html" title="enum gift::diff::BlobDiff">Blob<wbr>Diff</a></dt><dt><a class="enum" href="enum.BlobSide.html" title="enum gift::diff::BlobSide">Blob<wbr>Side</a></dt><dd>blob 内容的来源，是 diff 模块唯一需要关心“从哪里读字节“的地方。</dd><dt><a class="enum" href="enum.DiffEntry.html" title="enum gift::diff::DiffEntry">Diff<wbr>Entry</a></dt><dd>两棵 tree 之间单条路径的结构差异（只含 OID / FileMode，不含内容）。
+路径相对于传入的两棵 tree 的公共根。</dd></dl><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><dl class="item-table"><dt><a class="fn" href="fn.diff_blobs.html" title="fn gift::diff::diff_blobs">diff_<wbr>blobs</a></dt><dd>比较两个 blob 来源的内容，返回 unified diff 字符串或二进制标记。</dd><dt><a class="fn" href="fn.diff_commits.html" title="fn gift::diff::diff_commits">diff_<wbr>commits</a></dt><dd>比较两个 commit 之间的文件差异：读取各自的 tree 后委托 <code>diff_dirs</code>。</dd><dt><a class="fn" href="fn.diff_dirs.html" title="fn gift::diff::diff_dirs">diff_<wbr>dirs</a></dt><dd>比较两个目录（TreeObject）：先做结构 diff，再对每个变动文件做内容 diff。</dd><dt><a class="fn" href="fn.diff_trees.html" title="fn gift::diff::diff_trees">diff_<wbr>trees</a></dt><dd>比较两棵 TreeObject，返回所有叶节点（blob/symlink/gitlink）的结构差异列表。
+<strong>只比较 OID 和 FileMode，不读取 blob 内容。</strong>
+若需要内容级 diff，请用 <code>diff_dirs</code> / <code>diff_commits</code>。</dd><dt><a class="fn" href="fn.subtree_at.html" title="fn gift::diff::subtree_at">subtree_<wbr>at</a></dt><dd>沿 <code>path</code> 的各个分量在 <code>tree</code> 中向下导航，返回对应的子 TreeObject。
+路径为空时返回 tree 本身（通过 OID 重读，因为 TreeObject 没有 Clone）。
+中途某个分量不存在、或指向的不是 Directory，返回 <code>None</code>。</dd></dl></section></div></main></body></html>

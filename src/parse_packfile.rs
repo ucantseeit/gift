@@ -4,7 +4,6 @@
 //
 
 use crate::get_packfile_by_network::{RefAdvertisement, discover_refs, fetch_pack};
-use crate::get_packfile_by_network::parse_advertisement;
 use std::collections::HashMap;
 use std::io::{self, Read};
 use std::io::Write;
@@ -668,7 +667,7 @@ mod write_tests {
         let adv_bytes = Command::new("git").args(["upload-pack", "--advertise-refs"]).arg(&src)
             .output().unwrap().stdout;
         let mut cur: &[u8] = &adv_bytes;
-        let adv = parse_advertisement(&mut cur).unwrap();
+        let adv = crate::get_packfile_by_network::parse_advertisement(&mut cur).unwrap();
  
         // 第 6 步：解析 pack → objects
         let packdir = src.join(".git/objects/pack");
